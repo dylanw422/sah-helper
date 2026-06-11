@@ -2,14 +2,10 @@
 
 import { FileTextIcon } from "lucide-react";
 import { motion } from "motion/react";
-import { useState } from "react";
 
 import SignInForm from "@/components/sign-in-form";
-import SignUpForm from "@/components/sign-up-form";
 
 export default function SignInView() {
-  const [showSignIn, setShowSignIn] = useState(true);
-
   return (
     <div className="flex min-h-svh flex-col items-center justify-center px-4">
       <motion.div
@@ -27,11 +23,7 @@ export default function SignInView() {
         <p className="text-center text-xs text-muted-foreground">
           VA SAH grant packet automation
         </p>
-        {showSignIn ? (
-          <SignInForm onSwitchToSignUp={() => setShowSignIn(false)} />
-        ) : (
-          <SignUpForm onSwitchToSignIn={() => setShowSignIn(true)} />
-        )}
+        <SignInForm />
       </motion.div>
     </div>
   );

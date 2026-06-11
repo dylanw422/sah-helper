@@ -8,7 +8,7 @@ import z from "zod";
 
 import { authClient } from "@/lib/auth-client";
 
-export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () => void }) {
+export default function SignInForm() {
   const router = useRouter();
 
   const form = useForm({
@@ -36,7 +36,7 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
     validators: {
       onSubmit: z.object({
         email: z.email("Invalid email address"),
-        password: z.string().min(8, "Password must be at least 8 characters"),
+        password: z.string().min(6, "Password must be at least 6 characters"),
       }),
     },
   });
@@ -110,15 +110,9 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
         </form.Subscribe>
       </form>
 
-      <div className="mt-4 text-center">
-        <Button
-          variant="link"
-          onClick={onSwitchToSignUp}
-          className="text-indigo-600 hover:text-indigo-800"
-        >
-          Need an account? Sign Up
-        </Button>
-      </div>
+      <p className="mt-4 text-center text-xs text-muted-foreground">
+        First time here? Sign in with your email and the 6-digit code you were given.
+      </p>
     </div>
   );
 }

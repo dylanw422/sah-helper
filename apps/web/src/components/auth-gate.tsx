@@ -1,6 +1,7 @@
 "use client";
 
-import { Authenticated, AuthLoading, Unauthenticated } from "convex/react";
+import { api } from "@sah-helper/backend/convex/_generated/api";
+import { Authenticated, AuthLoading, Unauthenticated, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
@@ -14,10 +15,32 @@ function RedirectToSignIn() {
   return null;
 }
 
+function PasswordSetupGate({ children }: { children: React.ReactNode }) {
+  const status = useQuery(api.users.passwordSetupStatus);
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status?.needsSetup) {
+      router.replace("/set-password");
+    }
+  }, [status, router]);
+
+  if (status === undefined || status.needsSetup) {
+    return (
+      <div className="flex h-[60svh] items-center justify-center">
+        <Loader />
+      </div>
+    );
+  }
+  return children;
+}
+
 export function AuthGate({ children }: { children: React.ReactNode }) {
   return (
     <>
-      <Authenticated>{children}</Authenticated>
+      <Authenticated>
+        <PasswordSetupGate>{children}</PasswordSetupGate>
+      </Authenticated>
       <AuthLoading>
         <div className="flex h-[60svh] items-center justify-center">
           <Loader />

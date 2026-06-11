@@ -53,6 +53,15 @@ export default defineSchema({
     contractorLicense: v.string(),
   }),
 
+  authorizedUsers: defineTable({
+    email: v.string(),
+    // 6-digit first-login code; doubles as the initial password. Cleared
+    // once the user sets a real password.
+    code: v.optional(v.string()),
+    passwordSet: v.boolean(),
+    createdAt: v.number(),
+  }).index("by_email", ["email"]),
+
   pdfTemplates: defineTable({
     key: v.string(),
     storageId: v.id("_storage"),

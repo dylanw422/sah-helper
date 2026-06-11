@@ -28,6 +28,7 @@ import type * as settings from "../settings.js";
 import type * as templateMapping from "../templateMapping.js";
 import type * as templates from "../templates.js";
 import type * as uploads from "../uploads.js";
+import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -56,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   templateMapping: typeof templateMapping;
   templates: typeof templates;
   uploads: typeof uploads;
+  users: typeof users;
 }>;
 
 /**
