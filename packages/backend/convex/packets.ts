@@ -6,7 +6,7 @@ import type { Id } from "./_generated/dataModel";
 import { requireAuth } from "./lib/auth";
 import { buildDrawSchedule, type DrawSchedule } from "./lib/drawSchedule";
 import { fillTemplate, mergeDocuments, mergePdfBytes } from "./lib/pdf";
-import { buildFieldValues, type PacketData } from "./lib/pdfFieldMap";
+import { buildFieldValues, buildSizeGroups, type PacketData } from "./lib/pdfFieldMap";
 import { DOC_ORDER, getTemplateKey, type DrawCount } from "./lib/templateKeys";
 import { TEMPLATE_DISPLAY_NAMES } from "./lib/templateNames";
 import { lineItemValidator } from "./schema";
@@ -99,7 +99,9 @@ export const generatePacket = action({
       const blob = await ctx.storage.get(template.storageId!);
       if (!blob) throw new Error(`Template file missing from storage: ${key}`);
       const bytes = await blob.arrayBuffer();
-      filledDocs.push(await fillTemplate(bytes, buildFieldValues(packetData, fieldMap)));
+      filledDocs.push(
+        await fillTemplate(bytes, buildFieldValues(packetData, fieldMap), buildSizeGroups(fieldMap)),
+      );
     }
 
     const mergedBytes = await mergeDocuments(filledDocs);

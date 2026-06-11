@@ -133,6 +133,25 @@ export function isPacketDataKey(key: string): key is keyof PacketData {
   return key in KEY_DESCRIPTIONS;
 }
 
+// Families of PacketData keys that render as a visual column on a form, so
+// their PDF fields must all use the same (smallest fitting) font size.
+const SIZE_GROUP_PATTERNS: RegExp[] = [
+  /^draw\dDescription$/,
+  /^(draw\dAmount|finalDrawAmount)$/,
+  /^lineItem\d+Description$/,
+  /^lineItem\d+Amount$/,
+];
+
+// Resolve a template's fieldMap into groups of PDF field names that must
+// share a font size when filled.
+export function buildSizeGroups(fieldMap: Record<string, string>): string[][] {
+  return SIZE_GROUP_PATTERNS.map((pattern) =>
+    Object.entries(fieldMap)
+      .filter(([, key]) => pattern.test(key))
+      .map(([fieldName]) => fieldName),
+  ).filter((group) => group.length > 1);
+}
+
 // Resolve PacketData into a flat fieldName → value map for pdf-lib filling,
 // using a template's stored fieldMap (AcroForm field name → PacketData key).
 export function buildFieldValues(
