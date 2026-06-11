@@ -5,6 +5,7 @@ function isDateField(fieldName: string): boolean {
   return fieldName.toLowerCase().includes("date");
 }
 
+
 export async function fillTemplate(
   templateBytes: ArrayBuffer,
   fieldValues: Record<string, string>,
@@ -13,10 +14,9 @@ export async function fillTemplate(
   const form = pdfDoc.getForm();
 
   for (const [fieldName, value] of Object.entries(fieldValues)) {
-    if (isDateField(fieldName)) continue;
+    if (isDateField(fieldName) || !value) continue;
     try {
-      const field = form.getTextField(fieldName);
-      if (value) field.setText(value);
+      form.getTextField(fieldName).setText(value);
     } catch {
       // Field not present in this template — skip silently
     }

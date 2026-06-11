@@ -94,6 +94,7 @@ export const generatePacket = action({
         // pre-dates auto-mapping) — generate and persist it now.
         fieldMap = await ctx.runAction(internal.templateMapping.mapTemplateFields, { key });
       }
+
       const blob = await ctx.storage.get(template.storageId!);
       if (!blob) throw new Error(`Template file missing from storage: ${key}`);
       const bytes = await blob.arrayBuffer();

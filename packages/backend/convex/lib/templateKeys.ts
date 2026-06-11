@@ -4,9 +4,11 @@ export const DRAW_DEPENDENT_DOCS = [
   "draw-schedule",
 ] as const;
 
-export const STATIC_DOCS = ["va-addendum", "builder-spec-sheet", "scope-of-work"] as const;
+export const STATIC_DOCS = ["va-addendum", "scope-of-work"] as const;
 
-// Merge order is fixed: contract, payment schedule, draw schedule, addendum, spec sheet, scope of work
+// Merge order is fixed: contract, payment schedule, draw schedule, addendum, scope of work.
+// The builder spec sheet (VA 26-1852) is intentionally NOT part of the packet —
+// the contractor fills it manually.
 export const DOC_ORDER = [...DRAW_DEPENDENT_DOCS, ...STATIC_DOCS] as const;
 
 export type DocName = (typeof DOC_ORDER)[number];
@@ -23,7 +25,6 @@ export const TEMPLATE_KEYS = [
   "draw-schedule-5draw",
   "draw-schedule-6draw",
   "va-addendum",
-  "builder-spec-sheet",
   "scope-of-work",
 ] as const;
 

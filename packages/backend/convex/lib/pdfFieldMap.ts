@@ -40,7 +40,7 @@ export type PacketData = {
   contractorEmail: string;
   contractorLicense: string;
 
-  // Combined name + address blocks (e.g. builder spec sheet header)
+  // Combined name + address blocks (for forms with single name-and-address fields)
   clientNameAddress: string;
   contractorNameAddress: string;
 

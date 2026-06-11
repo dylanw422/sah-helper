@@ -16,6 +16,12 @@
 
 const MAX_DRAW_CENTS = 4_000_000; // $40,000
 
+// Profit is built into the 20% holdback: never scheduled into a draw, and not
+// a work item for the spec sheet.
+export function isProfitItem(item: { description: string }): boolean {
+  return /profit/i.test(item.description);
+}
+
 export type DrawSchedule = {
   /** Length = drawCount. Dollars. Last entry is the 20% holdback. */
   drawAmounts: number[];
@@ -38,7 +44,7 @@ export function buildDrawSchedule(
   // assign it to a draw.
   const schedulable = lineItems
     .map((_, i) => i)
-    .filter((i) => !/profit/i.test(lineItems[i].description));
+    .filter((i) => !isProfitItem(lineItems[i]));
 
   if (totalCents <= 0) {
     throw new Error("Cannot build a draw schedule: line items total $0.");
