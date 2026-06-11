@@ -9,10 +9,12 @@
     "dev:setup": "convex dev --configure --until-success"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.99.0",
     "@convex-dev/better-auth": "catalog:",
     "better-auth": "catalog:",
     "convex": "catalog:",
     "dotenv": "catalog:",
+    "pdf-lib": "^1.17.1",
     "zod": "catalog:"
   },
   "devDependencies": {

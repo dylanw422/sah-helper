@@ -3,7 +3,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import "../index.css";
 
-import Header from "@/components/header";
 import Providers from "@/components/providers";
 import { getToken } from "@/lib/auth-server";
 
@@ -18,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "sah-helper",
-  description: "sah-helper",
+  title: "SAH Helper",
+  description: "VA SAH grant packet automation",
 };
 
 export default async function RootLayout({
@@ -30,13 +29,11 @@ export default async function RootLayout({
   const token = await getToken();
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <Providers initialToken={token}>
-          <div className="grid grid-rows-[auto_1fr] h-svh">
-            <Header />
-            {children}
-          </div>
-        </Providers>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        suppressHydrationWarning
+      >
+        <Providers initialToken={token}>{children}</Providers>
       </body>
     </html>
   );

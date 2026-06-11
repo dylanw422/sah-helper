@@ -1,3 +1,5 @@
+"use client";
+
 import { api } from "@sah-helper/backend/convex/_generated/api";
 import { Button } from "@sah-helper/ui/components/button";
 import {
@@ -10,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@sah-helper/ui/components/dropdown-menu";
 import { useQuery } from "convex/react";
+import { SettingsIcon, UserIcon, WrenchIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
@@ -20,19 +23,33 @@ export default function UserMenu() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="outline" />}>{user?.name}</DropdownMenuTrigger>
-      <DropdownMenuContent className="bg-card">
+      <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
+        <UserIcon className="size-3.5" />
+        {user?.name ?? "Account"}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="bg-card" align="end">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>My Account</DropdownMenuLabel>
+          <DropdownMenuLabel>{user?.email}</DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem>{user?.email}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => router.push("/settings")}>
+            <SettingsIcon className="size-3.5" />
+            Settings
+          </DropdownMenuItem>
+          {process.env.NODE_ENV === "development" && (
+            <DropdownMenuItem onClick={() => router.push("/dev/inspect-templates")}>
+              <WrenchIcon className="size-3.5" />
+              Inspect Templates
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
             onClick={() => {
               authClient.signOut({
                 fetchOptions: {
                   onSuccess: () => {
-                    router.push("/dashboard");
+                    router.push("/sign-in");
+                    router.refresh();
                   },
                 },
               });
