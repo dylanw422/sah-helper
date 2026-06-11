@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { PDFDocument } from "pdf-lib";
 
 import { api, internal } from "./_generated/api";
 import { action } from "./_generated/server";
@@ -7,7 +8,14 @@ import { requireAuth } from "./lib/auth";
 import { buildDrawSchedule, type DrawSchedule } from "./lib/drawSchedule";
 import { fillTemplate, mergeDocuments, mergePdfBytes } from "./lib/pdf";
 import { buildFieldValues, buildSizeGroups, type PacketData } from "./lib/pdfFieldMap";
-import { DOC_ORDER, getTemplateKey, type DrawCount } from "./lib/templateKeys";
+import { buildScopeOfWorkPdf, type ScopeSection } from "./lib/scopeOfWorkPdf";
+import {
+  DOC_ORDER,
+  GENERATED_DOCS,
+  getTemplateKey,
+  type DrawCount,
+  type UploadedDocName,
+} from "./lib/templateKeys";
 import { TEMPLATE_DISPLAY_NAMES } from "./lib/templateNames";
 import { lineItemValidator } from "./schema";
 
@@ -45,7 +53,10 @@ export const generatePacket = action({
     const templates = await ctx.runQuery(api.templates.listTemplates);
     const drawCount = args.drawCount as DrawCount;
 
-    const neededKeys = DOC_ORDER.map((doc) => getTemplateKey(doc, drawCount));
+    const uploadedDocs = DOC_ORDER.filter(
+      (doc): doc is UploadedDocName => !(GENERATED_DOCS as readonly string[]).includes(doc),
+    );
+    const neededKeys = uploadedDocs.map((doc) => getTemplateKey(doc, drawCount));
     const missing = neededKeys.filter(
       (key) => !templates.find((t) => t.key === key && t.uploaded),
     );
@@ -86,8 +97,27 @@ export const generatePacket = action({
       ...buildDrawFields(schedule, args.lineItems),
     };
 
-    const filledDocs = [];
-    for (const key of neededKeys) {
+    const scopeSections: ScopeSection[] = await ctx.runAction(
+      internal.scopeOfWork.generateScopeSections,
+      { lineItems: args.lineItems },
+    );
+
+    const docs: { filename: string; doc: PDFDocument }[] = [];
+    for (const docName of DOC_ORDER) {
+      if ((GENERATED_DOCS as readonly string[]).includes(docName)) {
+        docs.push({
+          filename: "Scope of Work.pdf",
+          doc: await buildScopeOfWorkPdf({
+            clientName: args.name,
+            clientAddress,
+            caseNumber: args.caseNumber ?? "",
+            sections: scopeSections,
+          }),
+        });
+        continue;
+      }
+
+      const key = getTemplateKey(docName as UploadedDocName, drawCount);
       const template = templates.find((t) => t.key === key)!;
       let fieldMap: Record<string, string> | null = template.fieldMap;
       if (!fieldMap) {
@@ -99,12 +129,17 @@ export const generatePacket = action({
       const blob = await ctx.storage.get(template.storageId!);
       if (!blob) throw new Error(`Template file missing from storage: ${key}`);
       const bytes = await blob.arrayBuffer();
-      filledDocs.push(
-        await fillTemplate(bytes, buildFieldValues(packetData, fieldMap), buildSizeGroups(fieldMap)),
-      );
+      docs.push({
+        filename: TEMPLATE_DISPLAY_NAMES[key],
+        doc: await fillTemplate(
+          bytes,
+          buildFieldValues(packetData, fieldMap),
+          buildSizeGroups(fieldMap),
+        ),
+      });
     }
 
-    const mergedBytes = await mergeDocuments(filledDocs);
+    const mergedBytes = await mergeDocuments(docs.map((d) => d.doc));
     const packetStorageId = await ctx.storage.store(
       new Blob([mergedBytes as BlobPart], { type: "application/pdf" }),
     );
@@ -127,16 +162,15 @@ export const generatePacket = action({
 
     // Store each filled document individually so the file drawer can list and
     // re-merge them later.
-    for (let i = 0; i < neededKeys.length; i++) {
-      const key = neededKeys[i];
-      const docBytes = await filledDocs[i].save();
+    for (let i = 0; i < docs.length; i++) {
+      const docBytes = await docs[i].doc.save();
       const individualStorageId = await ctx.storage.store(
         new Blob([docBytes as BlobPart], { type: "application/pdf" }),
       );
       await ctx.runMutation(api.clientFiles.addClientFile, {
         clientId,
         storageId: individualStorageId,
-        filename: TEMPLATE_DISPLAY_NAMES[key],
+        filename: docs[i].filename,
         type: "generated",
         order: i,
       });

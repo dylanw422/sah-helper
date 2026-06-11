@@ -11,5 +11,4 @@ export const TEMPLATE_DISPLAY_NAMES: Record<TemplateKey, string> = {
   "draw-schedule-5draw": "Draw Schedule (5-draw).pdf",
   "draw-schedule-6draw": "Draw Schedule (6-draw).pdf",
   "va-addendum": "VA Addendum.pdf",
-  "scope-of-work": "Scope of Work.pdf",
 };
