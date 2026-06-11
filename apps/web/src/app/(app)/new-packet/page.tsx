@@ -55,6 +55,7 @@ export default function NewPacketPage() {
   const [file, setFile] = useState<File | null>(null);
   const [drawCount, setDrawCount] = useState<DrawCount | null>(null);
   const [extracted, setExtracted] = useState<ExtractedData | null>(null);
+  const [invoiceStorageId, setInvoiceStorageId] = useState<Id<"_storage"> | null>(null);
   const [verified, setVerified] = useState<VerifiedData | null>(null);
   const [result, setResult] = useState<{
     clientId: Id<"clients">;
@@ -101,6 +102,7 @@ export default function NewPacketPage() {
         });
         if (!uploadRes.ok) throw new Error("Upload failed");
         const { storageId } = (await uploadRes.json()) as { storageId: Id<"_storage"> };
+        setInvoiceStorageId(storageId);
         setDoneCount(1);
 
         // Cosmetic progress while the AI call runs
@@ -121,7 +123,7 @@ export default function NewPacketPage() {
             zip: data.clientZip,
             phone: data.clientPhone,
             invoiceNumber: data.invoiceNumber,
-            caseNumber: "",
+            caseNumber: data.caseNumber,
             lineItems: data.lineItems,
             totalMismatchWarning: data.totalMismatchWarning,
           });
@@ -137,7 +139,7 @@ export default function NewPacketPage() {
 
   const startGeneration = useCallback(
     async (data: VerifiedData) => {
-      if (!drawCount) return;
+      if (!drawCount || !invoiceStorageId) return;
       setVerified(data);
       setError(null);
       setDoneCount(0);
@@ -156,9 +158,10 @@ export default function NewPacketPage() {
           zip: data.zip,
           phone: data.phone,
           invoiceNumber: data.invoiceNumber,
-          caseNumber: data.caseNumber.trim() || undefined,
+          caseNumber: data.caseNumber.trim(),
           drawCount,
           lineItems: data.lineItems,
+          invoiceStorageId,
         });
         clearTimers();
         setDoneCount(8);
@@ -176,7 +179,7 @@ export default function NewPacketPage() {
         setError(e instanceof Error ? e.message : "Something went wrong while generating the packet.");
       }
     },
-    [drawCount, generatePacket, clearTimers, later],
+    [drawCount, invoiceStorageId, generatePacket, clearTimers, later],
   );
 
   const restart = useCallback(() => {
@@ -185,6 +188,7 @@ export default function NewPacketPage() {
     setFile(null);
     setDrawCount(null);
     setExtracted(null);
+    setInvoiceStorageId(null);
     setVerified(null);
     setResult(null);
     setError(null);

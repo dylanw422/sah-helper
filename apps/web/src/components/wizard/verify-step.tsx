@@ -103,6 +103,7 @@ export function VerifyStep({
   const canGenerate =
     fields.name.trim() !== "" &&
     fields.street.trim() !== "" &&
+    fields.caseNumber.trim() !== "" &&
     rows.length > 0 &&
     rows.some((row) => row.description.trim() !== "");
 
@@ -188,12 +189,13 @@ export function VerifyStep({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="field-caseNumber">SAH Case Number (optional)</Label>
+                <Label htmlFor="field-caseNumber">SAH Case Number (required)</Label>
                 <Input
                   id="field-caseNumber"
                   value={fields.caseNumber}
                   onChange={(e) => setField("caseNumber", e.target.value)}
-                  placeholder="Left blank if unknown"
+                  aria-invalid={fields.caseNumber.trim() === ""}
+                  placeholder="Identification number from the invoice"
                 />
               </div>
             </div>

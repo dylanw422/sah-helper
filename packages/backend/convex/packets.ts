@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import type { PDFDocument } from "pdf-lib";
+import { PDFDocument } from "pdf-lib";
 
 import { api, internal } from "./_generated/api";
 import { action } from "./_generated/server";
@@ -35,9 +35,10 @@ export const generatePacket = action({
     zip: v.string(),
     phone: v.string(),
     invoiceNumber: v.string(),
-    caseNumber: v.optional(v.string()),
+    caseNumber: v.string(),
     drawCount: v.union(v.literal(4), v.literal(5), v.literal(6)),
     lineItems: v.array(lineItemValidator),
+    invoiceStorageId: v.id("_storage"),
   },
   handler: async (
     ctx,
@@ -82,7 +83,7 @@ export const generatePacket = action({
       clientAddress,
       clientPhone: args.phone,
       invoiceNumber: args.invoiceNumber,
-      caseNumber: args.caseNumber ?? "",
+      caseNumber: args.caseNumber,
       contractTotal: formatCurrency(total),
       drawCount: String(drawCount),
       contractorCompanyName: settings.contractorCompanyName,
@@ -110,7 +111,7 @@ export const generatePacket = action({
           doc: await buildScopeOfWorkPdf({
             clientName: args.name,
             clientAddress,
-            caseNumber: args.caseNumber ?? "",
+            caseNumber: args.caseNumber,
             sections: scopeSections,
           }),
         });
@@ -129,17 +130,27 @@ export const generatePacket = action({
       const blob = await ctx.storage.get(template.storageId!);
       if (!blob) throw new Error(`Template file missing from storage: ${key}`);
       const bytes = await blob.arrayBuffer();
+
+      // The addendum's contractor line must show both the personal and company
+      // name, e.g. "William Gray / Access Innovations".
+      let data = packetData;
+      if (docName === "va-addendum") {
+        const combined = `${settings.contractorName} / ${settings.contractorCompanyName}`;
+        data = { ...packetData, contractorName: combined, contractorCompanyName: combined };
+      }
+
       docs.push({
         filename: TEMPLATE_DISPLAY_NAMES[key],
-        doc: await fillTemplate(
-          bytes,
-          buildFieldValues(packetData, fieldMap),
-          buildSizeGroups(fieldMap),
-        ),
+        doc: await fillTemplate(bytes, buildFieldValues(data, fieldMap), buildSizeGroups(fieldMap)),
       });
     }
 
-    const mergedBytes = await mergeDocuments(docs.map((d) => d.doc));
+    // The original invoice goes into the packet as the final document
+    const invoiceBlob = await ctx.storage.get(args.invoiceStorageId);
+    if (!invoiceBlob) throw new Error("Invoice file missing from storage.");
+    const invoiceDoc = await PDFDocument.load(await invoiceBlob.arrayBuffer());
+
+    const mergedBytes = await mergeDocuments([...docs.map((d) => d.doc), invoiceDoc]);
     const packetStorageId = await ctx.storage.store(
       new Blob([mergedBytes as BlobPart], { type: "application/pdf" }),
     );
@@ -175,6 +186,15 @@ export const generatePacket = action({
         order: i,
       });
     }
+
+    // The invoice blob already lives in storage — register it directly
+    await ctx.runMutation(api.clientFiles.addClientFile, {
+      clientId,
+      storageId: args.invoiceStorageId,
+      filename: "Invoice.pdf",
+      type: "generated",
+      order: docs.length,
+    });
 
     return { clientId, packetStorageId };
   },

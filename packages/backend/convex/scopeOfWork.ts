@@ -21,11 +21,17 @@ Write a Scope of Work document. Group the work into these areas, in this order:
 ${WORK_AREAS.join(", ")}.
 
 Rules:
-- Cover every line item exactly once. Do not invent work that is not on the invoice.
+- ONLY include actual physical construction work. EXCLUDE entirely any line items for
+  contractor profit, overhead, or fees; architectural plans, drawings, or project
+  specifications; permitting; VA SAH grant approval or administration; design or
+  project-management services. These are not part of the scope of work.
+- Cover every construction line item exactly once. Do not invent work that is not on
+  the invoice.
 - For each entry, write 1-2 plain sentences explaining the work to be performed,
   expanding terse invoice wording into a clear description a VA reviewer can understand.
 - Closely related line items may be combined into a single entry.
-- Only include areas that have work. Use "Other" for items that fit no other area.
+- Only include areas that have work. Use "Other" for construction items that fit no
+  other area.
 
 Return ONLY JSON in this shape:
 {"sections":[{"area":"Framing","items":["Frame new walls for the accessible bathroom addition.","..."]}]}`;

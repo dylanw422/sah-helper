@@ -21,6 +21,7 @@ export type ExtractedInvoiceData = {
   clientZip: string;
   clientPhone: string;
   invoiceNumber: string;
+  caseNumber: string;
   issueDate: string;
   lineItems: ExtractedLineItem[];
   subtotal: number;
@@ -34,6 +35,7 @@ const SYSTEM_PROMPT =
 const USER_PROMPT = `Extract the following from this invoice:
 {
   "clientName": "full name from 'Issued To: Name:' field",
+  "caseNumber": "the Identification number listed directly below the client name (the VA SAH case number)",
   "clientStreet": "street address from 'Issued To: Address:' field",
   "clientCity": "city parsed from the address",
   "clientState": "state abbreviation parsed from the address",
@@ -92,6 +94,7 @@ function tryParseInvoiceJson(text: string): Omit<ExtractedInvoiceData, "totalMis
       clientZip: typeof parsed.clientZip === "string" ? parsed.clientZip : "",
       clientPhone: parsed.clientPhone,
       invoiceNumber: typeof parsed.invoiceNumber === "string" ? parsed.invoiceNumber : "",
+      caseNumber: typeof parsed.caseNumber === "string" ? parsed.caseNumber : "",
       issueDate: typeof parsed.issueDate === "string" ? parsed.issueDate : "",
       lineItems: parsed.lineItems
         .filter(
