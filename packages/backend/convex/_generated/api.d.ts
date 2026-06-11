@@ -9,6 +9,7 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as clientFiles from "../clientFiles.js";
 import type * as clients from "../clients.js";
 import type * as healthCheck from "../healthCheck.js";
 import type * as http from "../http.js";
@@ -18,6 +19,7 @@ import type * as lib_drawSchedule from "../lib/drawSchedule.js";
 import type * as lib_pdf from "../lib/pdf.js";
 import type * as lib_pdfFieldMap from "../lib/pdfFieldMap.js";
 import type * as lib_templateKeys from "../lib/templateKeys.js";
+import type * as lib_templateNames from "../lib/templateNames.js";
 import type * as packets from "../packets.js";
 import type * as privateData from "../privateData.js";
 import type * as settings from "../settings.js";
@@ -33,6 +35,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  clientFiles: typeof clientFiles;
   clients: typeof clients;
   healthCheck: typeof healthCheck;
   http: typeof http;
@@ -42,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   "lib/pdf": typeof lib_pdf;
   "lib/pdfFieldMap": typeof lib_pdfFieldMap;
   "lib/templateKeys": typeof lib_templateKeys;
+  "lib/templateNames": typeof lib_templateNames;
   packets: typeof packets;
   privateData: typeof privateData;
   settings: typeof settings;

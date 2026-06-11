@@ -11,22 +11,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { downloadFile } from "@/lib/download";
 import { formatCurrency } from "@/lib/format";
 
 import { AnimatedCheck } from "./processing-steps";
 
 export async function downloadPacket(url: string) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Download failed");
-  const blob = await res.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = objectUrl;
-  a.download = "Packet.pdf";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(objectUrl);
+  return downloadFile(url, "Packet.pdf");
 }
 
 export function CompleteStep({

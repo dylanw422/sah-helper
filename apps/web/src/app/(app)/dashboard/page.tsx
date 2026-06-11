@@ -8,6 +8,7 @@ import { useQuery } from "convex/react";
 import {
   AlertTriangleIcon,
   ChevronRightIcon,
+  DownloadIcon,
   FolderOpenIcon,
   PlusIcon,
   SearchIcon,
@@ -17,7 +18,9 @@ import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { ClientFileDrawer } from "@/components/client-file-drawer";
 import { StatusBadge } from "@/components/status-badge";
+import { usePacketDownload } from "@/lib/download";
 import { fadeUp, stagger } from "@/lib/motion";
 import { formatCurrency, formatDate, initials, type ClientStatus } from "@/lib/format";
 
@@ -215,52 +218,114 @@ export default function DashboardPage() {
 
 function ClientRow({ client }: { client: Doc<"clients"> }) {
   const status = client.status as ClientStatus;
+  const [expanded, setExpanded] = useState(false);
+  const { download, downloading } = usePacketDownload(client._id);
+
   return (
-    <Link
-      href={`/clients/${client._id}`}
-      className="group relative flex items-center gap-4 rounded-md border border-border bg-card px-4 py-3.5 transition-all duration-200 hover:border-[rgb(var(--border-default-rgb)/var(--border-hover-alpha))] hover:bg-surface-overlay hover:shadow-[0_8px_32px_-8px_rgb(0_0_0/0.4)]"
-    >
+    <div className="group relative rounded-md border border-border bg-card transition-all duration-200 hover:border-[rgb(var(--border-default-rgb)/var(--border-hover-alpha))] hover:bg-surface-overlay hover:shadow-[0_8px_32px_-8px_rgb(0_0_0/0.4)]">
       <div
-        className={`absolute top-3 bottom-3 left-0 w-0.5 rounded-full ${STATUS_BAR_COLOR[status]}`}
-      />
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={`Toggle files for ${client.name}`}
+        onClick={() => setExpanded((e) => !e)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded((x) => !x);
+          }
+        }}
+        className="flex cursor-pointer items-center gap-4 px-4 py-3.5"
+      >
+        <div
+          className={`absolute top-3 bottom-3 left-0 w-0.5 rounded-full ${STATUS_BAR_COLOR[status]}`}
+        />
 
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-sm bg-accent font-mono text-[11px] font-semibold tracking-tight text-indigo-600 dark:text-indigo-400">
-        {initials(client.name)}
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-sm bg-accent font-mono text-[11px] font-semibold tracking-tight text-indigo-600 dark:text-indigo-400">
+          {initials(client.name)}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="mb-0.5 flex items-center gap-2">
+            <Link
+              href={`/clients/${client._id}`}
+              onClick={(e) => e.stopPropagation()}
+              className="min-w-0 truncate underline-offset-4 hover:underline"
+            >
+              <motion.span
+                layoutId={`client-name-${client._id}`}
+                className="truncate text-[14px] font-semibold"
+              >
+                {client.name}
+              </motion.span>
+            </Link>
+            <StatusBadge status={status} />
+          </div>
+          <p className="truncate text-xs text-muted-foreground/70">
+            {client.street}, {client.city}, {client.state} {client.zip}
+          </p>
+        </div>
+
+        <div className="hidden shrink-0 items-center gap-5 text-right sm:flex">
+          <div>
+            <p className="font-mono text-[14px] font-semibold tabular-nums">
+              {formatCurrency(client.total)}
+            </p>
+            <p className="text-[11px] text-muted-foreground/70">{client.drawCount} draws</p>
+          </div>
+          <div>
+            <p className="text-[11px] text-muted-foreground/70">Created</p>
+            <p className="font-mono text-[11px] text-muted-foreground">
+              {formatDate(client.createdAt)}
+            </p>
+          </div>
+        </div>
+
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!client.packetStorageId || downloading}
+          onClick={(e) => {
+            e.stopPropagation();
+            void download(client.packetDirty);
+          }}
+          title={
+            client.packetDirty
+              ? "New files added — packet will be rebuilt on download."
+              : "Download Packet.pdf"
+          }
+          className="relative shrink-0"
+        >
+          <DownloadIcon className="size-3.5" />
+          <span className="hidden md:inline">{downloading ? "Downloading..." : "Download"}</span>
+          {client.packetDirty && (
+            <span className="absolute -top-1 -right-1 size-2 rounded-full bg-amber-400" />
+          )}
+        </Button>
+
+        <ChevronRightIcon
+          className={`size-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
+            expanded ? "rotate-90" : ""
+          }`}
+        />
       </div>
 
-      <div className="min-w-0 flex-1">
-        <div className="mb-0.5 flex items-center gap-2">
-          <motion.span
-            layoutId={`client-name-${client._id}`}
-            className="truncate text-[14px] font-semibold"
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="overflow-hidden"
           >
-            {client.name}
-          </motion.span>
-          <StatusBadge status={status} />
-        </div>
-        <p className="truncate text-xs text-muted-foreground/70">
-          {client.street}, {client.city}, {client.state} {client.zip}
-        </p>
-      </div>
-
-      <div className="hidden shrink-0 items-center gap-5 text-right sm:flex">
-        <div>
-          <p className="font-mono text-[14px] font-semibold tabular-nums">
-            {formatCurrency(client.total)}
-          </p>
-          <p className="text-[11px] text-muted-foreground/70">{client.drawCount} draws</p>
-        </div>
-        <div>
-          <p className="text-[11px] text-muted-foreground/70">Created</p>
-          <p className="font-mono text-[11px] text-muted-foreground">
-            {formatDate(client.createdAt)}
-          </p>
-        </div>
-        <div className="-translate-x-1 opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100">
-          <ChevronRightIcon className="size-4 text-muted-foreground" />
-        </div>
-      </div>
-    </Link>
+            <div className="border-t border-border px-4 py-4">
+              <ClientFileDrawer clientId={client._id} />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 

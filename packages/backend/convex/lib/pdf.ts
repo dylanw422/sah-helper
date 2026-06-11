@@ -35,6 +35,11 @@ export async function mergeDocuments(filledDocs: PDFDocument[]): Promise<Uint8Ar
   return merged.save();
 }
 
+export async function mergePdfBytes(docs: ArrayBuffer[]): Promise<Uint8Array> {
+  const loaded = await Promise.all(docs.map((bytes) => PDFDocument.load(bytes)));
+  return mergeDocuments(loaded);
+}
+
 export async function enumerateFields(
   pdfBytes: ArrayBuffer,
 ): Promise<{ name: string; type: string }[]> {

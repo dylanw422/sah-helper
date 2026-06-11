@@ -44,6 +44,27 @@ export const updateClientStatus = mutation({
   },
 });
 
+export const setPacketStorageId = mutation({
+  args: {
+    clientId: v.id("clients"),
+    packetStorageId: v.id("_storage"),
+    dirty: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    await requireAuth(ctx);
+    const client = await ctx.db.get(args.clientId);
+    if (!client) throw new Error("Client not found");
+    if (client.packetStorageId && client.packetStorageId !== args.packetStorageId) {
+      await ctx.storage.delete(client.packetStorageId);
+    }
+    await ctx.db.patch(args.clientId, {
+      packetStorageId: args.packetStorageId,
+      packetDirty: args.dirty,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const deleteClient = mutation({
   args: { clientId: v.id("clients") },
   handler: async (ctx, args) => {
@@ -52,6 +73,14 @@ export const deleteClient = mutation({
     if (!client) return;
     if (client.packetStorageId) {
       await ctx.storage.delete(client.packetStorageId);
+    }
+    const files = await ctx.db
+      .query("clientFiles")
+      .withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+      .take(200);
+    for (const file of files) {
+      await ctx.storage.delete(file.storageId);
+      await ctx.db.delete(file._id);
     }
     await ctx.db.delete(args.clientId);
   },

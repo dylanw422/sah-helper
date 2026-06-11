@@ -24,9 +24,22 @@ export default defineSchema({
     total: v.number(),
     status: v.union(v.literal("unsigned"), v.literal("signed"), v.literal("complete")),
     packetStorageId: v.optional(v.id("_storage")),
+    // True when files were added/removed since the merged Packet.pdf was built
+    packetDirty: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_createdAt", ["createdAt"]),
+
+  clientFiles: defineTable({
+    clientId: v.id("clients"),
+    storageId: v.id("_storage"),
+    filename: v.string(),
+    type: v.union(v.literal("generated"), v.literal("uploaded")),
+    order: v.number(),
+    addedAt: v.number(),
+  })
+    .index("by_clientId", ["clientId"])
+    .index("by_clientId_type", ["clientId", "type"]),
 
   settings: defineTable({
     contractorCompanyName: v.string(),

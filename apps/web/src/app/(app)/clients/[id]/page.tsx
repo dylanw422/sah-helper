@@ -23,9 +23,10 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { ClientFileDrawer } from "@/components/client-file-drawer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { StatusBadge } from "@/components/status-badge";
-import { downloadPacket } from "@/components/wizard/complete-step";
+import { usePacketDownload } from "@/lib/download";
 import { formatCurrency, formatDate, type ClientStatus } from "@/lib/format";
 
 export default function ClientDetailPage() {
@@ -34,13 +35,12 @@ export default function ClientDetailPage() {
   const router = useRouter();
 
   const client = useQuery(api.clients.getClient, { clientId });
-  const downloadUrl = useQuery(api.clients.getPacketDownloadUrl, { clientId });
   const updateStatus = useMutation(api.clients.updateClientStatus);
   const deleteClient = useMutation(api.clients.deleteClient);
+  const { download, downloading } = usePacketDownload(clientId);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [downloading, setDownloading] = useState(false);
 
   if (client === undefined) {
     return (
@@ -110,18 +110,6 @@ export default function ClientDetailPage() {
     } catch {
       toast.error("Could not delete client.");
       setDeleting(false);
-    }
-  };
-
-  const handleDownload = async () => {
-    if (!downloadUrl) return;
-    setDownloading(true);
-    try {
-      await downloadPacket(downloadUrl);
-    } catch {
-      toast.error("Could not download the packet.");
-    } finally {
-      setDownloading(false);
     }
   };
 
@@ -235,10 +223,36 @@ export default function ClientDetailPage() {
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle>Packet Files</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ClientFileDrawer clientId={clientId} />
+          </CardContent>
+        </Card>
+
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Button size="lg" disabled={!downloadUrl || downloading} onClick={handleDownload}>
+          <Button
+            size="lg"
+            disabled={!client.packetStorageId || downloading}
+            onClick={() => void download(client.packetDirty)}
+            title={
+              client.packetDirty
+                ? "New files added — packet will be rebuilt on download."
+                : undefined
+            }
+            className="relative"
+          >
             <DownloadIcon data-icon="inline-start" />
-            {downloading ? "Downloading..." : "Download Packet.pdf"}
+            {downloading
+              ? client.packetDirty
+                ? "Rebuilding packet..."
+                : "Downloading..."
+              : "Download Packet.pdf"}
+            {client.packetDirty && (
+              <span className="absolute -top-1 -right-1 size-2 rounded-full bg-amber-400" />
+            )}
           </Button>
           <div className="text-xs text-muted-foreground">
             Created {formatDate(client.createdAt)} · Updated {formatDate(client.updatedAt)}

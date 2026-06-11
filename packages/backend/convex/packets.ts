@@ -5,9 +5,10 @@ import { action } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { requireAuth } from "./lib/auth";
 import { buildDrawSchedule, type DrawSchedule } from "./lib/drawSchedule";
-import { fillTemplate, mergeDocuments } from "./lib/pdf";
+import { fillTemplate, mergeDocuments, mergePdfBytes } from "./lib/pdf";
 import { buildFieldValues, type PacketData } from "./lib/pdfFieldMap";
 import { DOC_ORDER, getTemplateKey, type DrawCount } from "./lib/templateKeys";
+import { TEMPLATE_DISPLAY_NAMES } from "./lib/templateNames";
 import { lineItemValidator } from "./schema";
 
 function formatCurrency(amount: number): string {
@@ -122,7 +123,58 @@ export const generatePacket = action({
       packetStorageId,
     });
 
+    // Store each filled document individually so the file drawer can list and
+    // re-merge them later.
+    for (let i = 0; i < neededKeys.length; i++) {
+      const key = neededKeys[i];
+      const docBytes = await filledDocs[i].save();
+      const individualStorageId = await ctx.storage.store(
+        new Blob([docBytes as BlobPart], { type: "application/pdf" }),
+      );
+      await ctx.runMutation(api.clientFiles.addClientFile, {
+        clientId,
+        storageId: individualStorageId,
+        filename: TEMPLATE_DISPLAY_NAMES[key],
+        type: "generated",
+        order: i,
+      });
+    }
+
     return { clientId, packetStorageId };
+  },
+});
+
+export const regeneratePacket = action({
+  args: { clientId: v.id("clients") },
+  handler: async (ctx, args): Promise<{ packetStorageId: Id<"_storage"> }> => {
+    await requireAuth(ctx);
+
+    const files = await ctx.runQuery(api.clientFiles.listClientFiles, {
+      clientId: args.clientId,
+    });
+    if (files.length === 0) {
+      throw new Error("No files found for this client.");
+    }
+
+    const docBytes: ArrayBuffer[] = [];
+    for (const file of files) {
+      const blob = await ctx.storage.get(file.storageId);
+      if (!blob) throw new Error(`File missing from storage: ${file.filename}`);
+      docBytes.push(await blob.arrayBuffer());
+    }
+
+    const mergedBytes = await mergePdfBytes(docBytes);
+    const packetStorageId = await ctx.storage.store(
+      new Blob([mergedBytes as BlobPart], { type: "application/pdf" }),
+    );
+
+    await ctx.runMutation(api.clients.setPacketStorageId, {
+      clientId: args.clientId,
+      packetStorageId,
+      dirty: false,
+    });
+
+    return { packetStorageId };
   },
 });
 
