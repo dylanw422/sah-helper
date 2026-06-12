@@ -26,6 +26,7 @@ import type * as lib_templateNames from "../lib/templateNames.js";
 import type * as packets from "../packets.js";
 import type * as privateData from "../privateData.js";
 import type * as scopeOfWork from "../scopeOfWork.js";
+import type * as seed from "../seed.js";
 import type * as settings from "../settings.js";
 import type * as templateMapping from "../templateMapping.js";
 import type * as templates from "../templates.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   packets: typeof packets;
   privateData: typeof privateData;
   scopeOfWork: typeof scopeOfWork;
+  seed: typeof seed;
   settings: typeof settings;
   templateMapping: typeof templateMapping;
   templates: typeof templates;
