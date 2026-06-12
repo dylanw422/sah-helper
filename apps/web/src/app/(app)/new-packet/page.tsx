@@ -29,7 +29,6 @@ const EXTRACTION_STEPS = [
 const GENERATION_STEPS = [
   "Filling Construction Contract...",
   "Filling Payment Schedule...",
-  "Filling Draw Schedule...",
   "Filling VA Addendum...",
   "Filling Builder Spec Sheet...",
   "Filling Scope of Work...",
