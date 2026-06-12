@@ -85,8 +85,8 @@ export default function DashboardPage() {
         >
           <AlertTriangleIcon className="size-4 shrink-0" />
           <span>
-            Contractor information is not configured. Packets cannot be generated until settings
-            are complete.
+            Contractor information is not configured. Packets cannot be generated until settings are
+            complete.
           </span>
           <Link href="/settings" className="ml-auto shrink-0 font-medium underline">
             Configure Settings
@@ -97,13 +97,13 @@ export default function DashboardPage() {
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold tracking-[-0.025em]">Clients</h1>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Link href="/invoice-builder">
+          <Link href="/invoices">
             <Button
               size="lg"
               className="w-full bg-emerald-600 text-white hover:bg-emerald-700 hover:shadow-[0_0_0_1px_rgb(16_185_129/0.5),0_4px_16px_-4px_rgb(16_185_129/0.6)] sm:w-auto"
             >
               <ReceiptIcon data-icon="inline-start" />
-              New Invoice
+              Invoices
             </Button>
           </Link>
           <Link href="/new-packet">
