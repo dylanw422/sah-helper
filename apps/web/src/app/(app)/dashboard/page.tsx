@@ -19,7 +19,7 @@ import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { ClientFileDrawer } from "@/components/client-file-drawer";
+import { ClientFileList } from "@/components/client-file-drawer";
 import { StatusBadge } from "@/components/status-badge";
 import { usePacketDownload } from "@/lib/download";
 import { fadeUp, stagger } from "@/lib/motion";
@@ -231,7 +231,20 @@ export default function DashboardPage() {
 function ClientRow({ client }: { client: Doc<"clients"> }) {
   const status = client.status as ClientStatus;
   const [expanded, setExpanded] = useState(false);
+  const [filesRequested, setFilesRequested] = useState(false);
   const { download, downloading } = usePacketDownload(client._id);
+
+  // The drawer mounts only once files are loaded, so its open animation
+  // measures the real content height instead of a loading spinner.
+  const files = useQuery(
+    api.clientFiles.listClientFiles,
+    filesRequested ? { clientId: client._id } : "skip",
+  );
+
+  const toggle = () => {
+    setExpanded((e) => !e);
+    setFilesRequested(true);
+  };
 
   return (
     <div className="group relative rounded-md border border-border bg-card transition-all duration-200 hover:border-[rgb(var(--border-default-rgb)/var(--border-hover-alpha))] hover:bg-surface-overlay hover:shadow-[0_8px_32px_-8px_rgb(0_0_0/0.4)]">
@@ -240,11 +253,11 @@ function ClientRow({ client }: { client: Doc<"clients"> }) {
         tabIndex={0}
         aria-expanded={expanded}
         aria-label={`Toggle files for ${client.name}`}
-        onClick={() => setExpanded((e) => !e)}
+        onClick={toggle}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            setExpanded((x) => !x);
+            toggle();
           }
         }}
         className="flex cursor-pointer items-center gap-4 px-4 py-3.5"
@@ -323,7 +336,7 @@ function ClientRow({ client }: { client: Doc<"clients"> }) {
       </div>
 
       <AnimatePresence initial={false}>
-        {expanded && (
+        {expanded && files !== undefined && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
@@ -332,7 +345,7 @@ function ClientRow({ client }: { client: Doc<"clients"> }) {
             className="overflow-hidden"
           >
             <div className="border-t border-border px-4 py-4">
-              <ClientFileDrawer clientId={client._id} />
+              <ClientFileList clientId={client._id} files={files} />
             </div>
           </motion.div>
         )}

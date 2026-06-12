@@ -21,6 +21,16 @@ export function ClientFileDrawer({ clientId }: { clientId: Id<"clients"> }) {
     );
   }
 
+  return <ClientFileList clientId={clientId} files={files} />;
+}
+
+export function ClientFileList({
+  clientId,
+  files,
+}: {
+  clientId: Id<"clients">;
+  files: Doc<"clientFiles">[];
+}) {
   const generated = files.filter((f) => f.type === "generated");
   const uploaded = files.filter((f) => f.type === "uploaded");
 
