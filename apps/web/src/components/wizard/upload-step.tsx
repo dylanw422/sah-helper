@@ -6,7 +6,7 @@ import { Button } from "@sah-helper/ui/components/button";
 import { Label } from "@sah-helper/ui/components/label";
 import { Skeleton } from "@sah-helper/ui/components/skeleton";
 import { useQuery } from "convex/react";
-import { ChevronDownIcon, FileTextIcon, UploadCloudIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, FileTextIcon, SearchIcon, UploadCloudIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
 
@@ -59,6 +59,7 @@ export function UploadStep({
     initialSavedInvoice ?? null,
   );
   const [showSaved, setShowSaved] = useState(false);
+  const [savedSearch, setSavedSearch] = useState("");
   const [drawCount, setDrawCount] = useState<DrawCount | null>(initialDrawCount ?? null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -67,6 +68,14 @@ export function UploadStep({
   // Loaded eagerly so the drawer's content (and therefore its measured auto
   // height) is stable by the time it animates open.
   const savedInvoices = useQuery(api.invoiceBuilder.listInvoices);
+
+  const search = savedSearch.trim().toLowerCase();
+  const filteredInvoices = (savedInvoices ?? []).filter(
+    (invoice) =>
+      !search ||
+      invoice.invoiceNumber.toLowerCase().includes(search) ||
+      invoice.name.toLowerCase().includes(search),
+  );
 
   const handleFile = (f: File | undefined) => {
     setError(null);
@@ -231,7 +240,17 @@ export function UploadStep({
             >
               {/* Padding instead of margin: margins are excluded from the
                   animated height measurement and cause a jump at the end. */}
-              <div className="pt-3">
+              <div className="space-y-2 pt-3">
+                <div className="relative">
+                  <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
+                  <input
+                    type="text"
+                    value={savedSearch}
+                    onChange={(e) => setSavedSearch(e.target.value)}
+                    placeholder="Search by client name or invoice #"
+                    className="h-8 w-full rounded-md border border-border bg-card pr-3 pl-9 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-ring"
+                  />
+                </div>
                 <div className="max-h-56 divide-y divide-border overflow-y-auto rounded-md border border-border bg-card">
                 {savedInvoices === undefined ? (
                   <div className="space-y-2 p-3">
@@ -243,8 +262,12 @@ export function UploadStep({
                   <p className="px-4 py-6 text-center text-xs text-muted-foreground">
                     No saved invoices yet. Build one in the Invoice Builder first.
                   </p>
+                ) : filteredInvoices.length === 0 ? (
+                  <p className="px-4 py-6 text-center text-xs text-muted-foreground">
+                    No invoices match &ldquo;{savedSearch.trim()}&rdquo;.
+                  </p>
                 ) : (
-                  savedInvoices.map((invoice) => (
+                  filteredInvoices.map((invoice) => (
                     <button
                       key={invoice._id}
                       type="button"
@@ -254,6 +277,7 @@ export function UploadStep({
                         if (inputRef.current) inputRef.current.value = "";
                         setSavedInvoice(invoice);
                         setShowSaved(false);
+                        setSavedSearch("");
                       }}
                       className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-accent"
                     >
