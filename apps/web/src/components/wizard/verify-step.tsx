@@ -398,22 +398,21 @@ function DocumentSelectCard({
       <CardHeader>
         <CardTitle>{title}</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-xs text-muted-foreground">
-          Include these documents in the packet.
-        </p>
-        {docs.map((doc) => (
-          <div key={doc._id} className="flex items-center gap-2">
-            <Checkbox
-              id={`doc-${doc._id}`}
-              checked={selected.has(doc._id)}
-              onCheckedChange={(checked) => toggle(doc._id, checked === true)}
-            />
-            <Label htmlFor={`doc-${doc._id}`} className="cursor-pointer font-normal">
-              {doc.displayName}
-            </Label>
-          </div>
-        ))}
+      <CardContent>
+        <div className="grid grid-cols-3 gap-x-6 gap-y-3">
+          {docs.map((doc) => (
+            <div key={doc._id} className="flex items-center gap-2">
+              <Checkbox
+                id={`doc-${doc._id}`}
+                checked={selected.has(doc._id)}
+                onCheckedChange={(checked) => toggle(doc._id, checked === true)}
+              />
+              <Label htmlFor={`doc-${doc._id}`} className="cursor-pointer font-normal">
+                {doc.displayName}
+              </Label>
+            </div>
+          ))}
+        </div>
       </CardContent>
     </Card>
   );
