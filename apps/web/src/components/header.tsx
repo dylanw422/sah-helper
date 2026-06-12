@@ -1,45 +1,15 @@
 "use client";
 
-import { FileTextIcon } from "lucide-react";
+import { Button } from "@sah-helper/ui/components/button";
+import { FileTextIcon, SettingsIcon } from "lucide-react";
 import { motion } from "motion/react";
-import type { Route } from "next";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 
 import { useScrollOpacity } from "@/hooks/use-scroll-opacity";
 
-import { ModeToggle } from "./mode-toggle";
 import UserMenu from "./user-menu";
 
-const NAV_ITEMS: { href: Route; label: string }[] = [
-  { href: "/dashboard", label: "Clients" },
-  { href: "/invoice-builder", label: "Invoice Builder" },
-  { href: "/new-packet", label: "New Packet" },
-  { href: "/settings", label: "Settings" },
-];
-
-function NavItem({ href, label, active }: { href: Route; label: string; active: boolean }) {
-  return (
-    <Link
-      href={href}
-      className={`relative rounded-sm px-3 py-1.5 text-xs font-medium transition-colors duration-200 ${
-        active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-      }`}
-    >
-      {active && (
-        <motion.span
-          layoutId="nav-active-pill"
-          className="absolute inset-0 rounded-sm bg-accent ring-1 ring-[rgb(var(--accent-rgb)/0.25)]"
-          transition={{ type: "spring", stiffness: 500, damping: 42 }}
-        />
-      )}
-      <span className="relative z-10">{label}</span>
-    </Link>
-  );
-}
-
 export default function Header() {
-  const pathname = usePathname();
   const scrollOpacity = useScrollOpacity();
 
   return (
@@ -60,15 +30,13 @@ export default function Header() {
           <span className="text-[13px] font-semibold tracking-[-0.01em]">SAH Helper</span>
         </Link>
 
-        <nav className="hidden items-center gap-1 sm:flex">
-          {NAV_ITEMS.map(({ href, label }) => (
-            <NavItem key={href} href={href} label={label} active={pathname.startsWith(href)} />
-          ))}
-        </nav>
-
         <div className="flex items-center gap-1.5">
-          <ModeToggle />
           <UserMenu />
+          <Link href="/settings" aria-label="Settings">
+            <Button variant="ghost" size="icon-sm">
+              <SettingsIcon className="size-4" />
+            </Button>
+          </Link>
         </div>
       </div>
     </header>
