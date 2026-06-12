@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@sah-helper/ui/components/dropdown-menu";
 import { useQuery } from "convex/react";
-import { SettingsIcon, UserIcon } from "lucide-react";
+import { UserIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
@@ -30,11 +30,6 @@ export default function UserMenu() {
       <DropdownMenuContent className="bg-card" align="end">
         <DropdownMenuGroup>
           <DropdownMenuLabel>{user?.email}</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => router.push("/settings")}>
-            <SettingsIcon className="size-3.5" />
-            Settings
-          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
