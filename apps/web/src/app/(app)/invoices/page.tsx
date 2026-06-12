@@ -4,21 +4,25 @@ import { api } from "@sah-helper/backend/convex/_generated/api";
 import type { Doc, Id } from "@sah-helper/backend/convex/_generated/dataModel";
 import { Button, buttonVariants } from "@sah-helper/ui/components/button";
 import { Skeleton } from "@sah-helper/ui/components/skeleton";
-import { useAction, useQuery } from "convex/react";
-import { DownloadIcon, FileTextIcon, PencilIcon, PlusIcon, SearchIcon } from "lucide-react";
+import { useAction, useMutation, useQuery } from "convex/react";
+import { DownloadIcon, FileTextIcon, PencilIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { downloadFile } from "@/lib/download";
 import { formatCurrency, formatDate, formatDisplayDate } from "@/lib/format";
 
 export default function SavedInvoicesPage() {
   const invoices = useQuery(api.invoiceBuilder.listInvoices);
   const buildInvoice = useAction(api.invoiceBuilder.buildInvoice);
+  const deleteInvoice = useMutation(api.invoiceBuilder.deleteInvoice);
   const router = useRouter();
   const [downloadingId, setDownloadingId] = useState<Id<"invoices"> | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Doc<"invoices"> | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [searchInput, setSearchInput] = useState("");
 
   const search = searchInput.trim().toLowerCase();
@@ -28,6 +32,19 @@ export default function SavedInvoicesPage() {
       invoice.invoiceNumber.toLowerCase().includes(search) ||
       invoice.name.toLowerCase().includes(search),
   );
+
+  const handleDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      await deleteInvoice({ id: pendingDelete._id });
+      setPendingDelete(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not delete the invoice.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleDownload = async (invoice: Doc<"invoices">) => {
     if (downloadingId) return;
@@ -135,12 +152,30 @@ export default function SavedInvoicesPage() {
                     <PencilIcon className="size-3.5" />
                     <span className="hidden sm:inline">Edit</span>
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Delete ${invoice.invoiceNumber}`}
+                    onClick={() => setPendingDelete(invoice)}
+                  >
+                    <Trash2Icon className="size-3.5 text-destructive" />
+                  </Button>
                 </div>
               ))}
             </div>
           )}
         </>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`Delete invoice ${pendingDelete?.invoiceNumber ?? ""}?`}
+        description="This invoice will be permanently deleted and cannot be recovered."
+        confirmLabel="Delete"
+        confirming={deleting}
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

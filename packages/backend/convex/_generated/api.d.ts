@@ -11,6 +11,7 @@
 import type * as auth from "../auth.js";
 import type * as clientFiles from "../clientFiles.js";
 import type * as clients from "../clients.js";
+import type * as customDocuments from "../customDocuments.js";
 import type * as healthCheck from "../healthCheck.js";
 import type * as http from "../http.js";
 import type * as invoiceBuilder from "../invoiceBuilder.js";
@@ -43,6 +44,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   clientFiles: typeof clientFiles;
   clients: typeof clients;
+  customDocuments: typeof customDocuments;
   healthCheck: typeof healthCheck;
   http: typeof http;
   invoiceBuilder: typeof invoiceBuilder;

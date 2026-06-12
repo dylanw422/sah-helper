@@ -227,6 +227,8 @@ export default function NewPacketPage() {
           drawCount,
           lineItems: data.lineItems,
           invoiceStorageId,
+          waiverIds: data.waiverIds ?? [],
+          specSheetIds: data.specSheetIds ?? [],
         });
         clearTimers();
         setDoneCount(8);

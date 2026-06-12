@@ -1,7 +1,10 @@
 "use client";
 
+import { api } from "@sah-helper/backend/convex/_generated/api";
+import type { Doc, Id } from "@sah-helper/backend/convex/_generated/dataModel";
 import { Button } from "@sah-helper/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@sah-helper/ui/components/card";
+import { Checkbox } from "@sah-helper/ui/components/checkbox";
 import { Input } from "@sah-helper/ui/components/input";
 import { Label } from "@sah-helper/ui/components/label";
 import {
@@ -12,6 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@sah-helper/ui/components/table";
+import { useQuery } from "convex/react";
 import { ArrowDownIcon, ArrowLeftIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
@@ -36,6 +40,10 @@ export type VerifiedData = {
   invoiceNumber: string;
   caseNumber: string;
   lineItems: VerifiedLineItem[];
+  // Library documents the user checked on the Verify step. Optional so flows
+  // that construct VerifiedData before that step can omit them.
+  waiverIds?: Id<"customDocuments">[];
+  specSheetIds?: Id<"customDocuments">[];
 };
 
 type EditableLineItem = {
@@ -85,6 +93,13 @@ export function VerifyStep({
       unitPrice: String(item.unitPrice),
     })),
   );
+  const customDocs = useQuery(api.customDocuments.listCustomDocuments, {});
+  const waivers = (customDocs ?? []).filter((d) => d.category === "waiver");
+  const specSheets = (customDocs ?? []).filter((d) => d.category === "spec-sheet");
+  const [selectedWaivers, setSelectedWaivers] = useState<Set<Id<"customDocuments">>>(new Set());
+  const [selectedSpecSheets, setSelectedSpecSheets] = useState<Set<Id<"customDocuments">>>(
+    new Set(),
+  );
 
   // Profit rows store a percentage in qty; their amount derives from the
   // subtotal of the regular rows rather than qty * unitPrice.
@@ -131,6 +146,9 @@ export function VerifyStep({
           unitPrice: parseFloat(row.unitPrice) || 0,
           amount: amountFor(row),
         })),
+      // Ids in list order (upload order), not click order.
+      waiverIds: waivers.filter((d) => selectedWaivers.has(d._id)).map((d) => d._id),
+      specSheetIds: specSheets.filter((d) => selectedSpecSheets.has(d._id)).map((d) => d._id),
     });
   };
 
@@ -214,6 +232,24 @@ export function VerifyStep({
             </div>
           </CardContent>
         </Card>
+
+        {waivers.length > 0 && (
+          <DocumentSelectCard
+            title="Waivers"
+            docs={waivers}
+            selected={selectedWaivers}
+            onChange={setSelectedWaivers}
+          />
+        )}
+
+        {specSheets.length > 0 && (
+          <DocumentSelectCard
+            title="Spec Sheets"
+            docs={specSheets}
+            selected={selectedSpecSheets}
+            onChange={setSelectedSpecSheets}
+          />
+        )}
 
         <Card>
           <CardHeader>
@@ -336,5 +372,49 @@ export function VerifyStep({
         </Button>
       </div>
     </div>
+  );
+}
+
+function DocumentSelectCard({
+  title,
+  docs,
+  selected,
+  onChange,
+}: {
+  title: string;
+  docs: Doc<"customDocuments">[];
+  selected: Set<Id<"customDocuments">>;
+  onChange: (next: Set<Id<"customDocuments">>) => void;
+}) {
+  const toggle = (id: Id<"customDocuments">, checked: boolean) => {
+    const next = new Set(selected);
+    if (checked) next.add(id);
+    else next.delete(id);
+    onChange(next);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Include these documents in the packet.
+        </p>
+        {docs.map((doc) => (
+          <div key={doc._id} className="flex items-center gap-2">
+            <Checkbox
+              id={`doc-${doc._id}`}
+              checked={selected.has(doc._id)}
+              onCheckedChange={(checked) => toggle(doc._id, checked === true)}
+            />
+            <Label htmlFor={`doc-${doc._id}`} className="cursor-pointer font-normal">
+              {doc.displayName}
+            </Label>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }

@@ -98,6 +98,14 @@ export const getInvoice = query({
   },
 });
 
+export const deleteInvoice = mutation({
+  args: { id: v.id("invoices") },
+  handler: async (ctx, { id }) => {
+    await requireAuth(ctx);
+    await ctx.db.delete(id);
+  },
+});
+
 export const suggestInvoiceNumber = query({
   args: {},
   handler: async (ctx) => {

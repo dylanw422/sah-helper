@@ -4,7 +4,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
-import { internalAction } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { internalAction, type ActionCtx } from "./_generated/server";
 import { enumerateFields } from "./lib/pdf";
 import { isPacketDataKey, KEY_DESCRIPTIONS } from "./lib/pdfFieldMap";
 
@@ -66,45 +67,70 @@ function tryParseMapping(
   return fieldMap;
 }
 
+async function generateFieldMap(
+  ctx: ActionCtx,
+  storageId: Id<"_storage">,
+  label: string,
+): Promise<Record<string, string>> {
+  const blob = await ctx.storage.get(storageId);
+  if (!blob) throw new Error(`Template file missing from storage: ${label}`);
+
+  const fields = await enumerateFields(await blob.arrayBuffer());
+  if (fields.length === 0) return {};
+
+  const fieldNames = fields.map((f) => f.name);
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const callClaude = async () => {
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4096,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: buildUserPrompt(label, fieldNames) }],
+    });
+    const textBlock = response.content.find((block) => block.type === "text");
+    return textBlock?.type === "text" ? textBlock.text : "";
+  };
+
+  const nameSet = new Set(fieldNames);
+  let mapping = tryParseMapping(await callClaude(), nameSet);
+  if (!mapping) {
+    mapping = tryParseMapping(await callClaude(), nameSet);
+  }
+  if (!mapping) {
+    throw new Error(`Could not generate a field mapping for template: ${label}`);
+  }
+  return mapping;
+}
+
 export const mapTemplateFields = internalAction({
   args: { key: v.string() },
   handler: async (ctx, args): Promise<Record<string, string>> => {
     const templates = await ctx.runQuery(internal.templates.listTemplatesInternal);
     const template = templates.find((t) => t.key === args.key);
     if (!template) throw new Error(`Template not uploaded: ${args.key}`);
-    const blob = await ctx.storage.get(template.storageId);
-    if (!blob) throw new Error(`Template file missing from storage: ${args.key}`);
 
-    const fields = await enumerateFields(await blob.arrayBuffer());
-    let fieldMap: Record<string, string> = {};
-
-    if (fields.length > 0) {
-      const fieldNames = fields.map((f) => f.name);
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const callClaude = async () => {
-        const response = await anthropic.messages.create({
-          model: "claude-sonnet-4-6",
-          max_tokens: 4096,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: buildUserPrompt(args.key, fieldNames) }],
-        });
-        const textBlock = response.content.find((block) => block.type === "text");
-        return textBlock?.type === "text" ? textBlock.text : "";
-      };
-
-      const nameSet = new Set(fieldNames);
-      let mapping = tryParseMapping(await callClaude(), nameSet);
-      if (!mapping) {
-        mapping = tryParseMapping(await callClaude(), nameSet);
-      }
-      if (!mapping) {
-        throw new Error(`Could not generate a field mapping for template: ${args.key}`);
-      }
-      fieldMap = mapping;
-    }
+    const fieldMap = await generateFieldMap(ctx, template.storageId, args.key);
 
     await ctx.runMutation(internal.templates.saveFieldMap, {
       templateId: template._id,
+      fieldMap,
+    });
+    return fieldMap;
+  },
+});
+
+export const mapCustomDocumentFields = internalAction({
+  args: { id: v.id("customDocuments") },
+  handler: async (ctx, args): Promise<Record<string, string>> => {
+    const doc = await ctx.runQuery(internal.customDocuments.getCustomDocumentInternal, {
+      id: args.id,
+    });
+    if (!doc) throw new Error("Custom document not found.");
+
+    const fieldMap = await generateFieldMap(ctx, doc.storageId, doc.displayName);
+
+    await ctx.runMutation(internal.customDocuments.saveCustomFieldMap, {
+      id: args.id,
       fieldMap,
     });
     return fieldMap;

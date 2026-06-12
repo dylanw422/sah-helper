@@ -7,8 +7,10 @@ export const DRAW_DEPENDENT_DOCS = [
 // uploaded template required.
 export const GENERATED_DOCS = ["scope-of-work"] as const;
 
-// Merge order is fixed: contract, addendum, scope of work, then the invoice
-// (inserted in packets.ts), with the payment schedule always last.
+// Merge order is fixed: contract, custom contract documents (spliced in by
+// packets.ts right after the contract), addendum, scope of work, then the
+// invoice and any selected waivers/spec sheets (also spliced in by packets.ts),
+// with the payment schedule always last.
 // The builder spec sheet (VA 26-1852) is intentionally NOT part of the packet —
 // the contractor fills it manually.
 export const DOC_ORDER = [

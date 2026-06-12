@@ -39,6 +39,8 @@ export const generatePacket = action({
     drawCount: v.union(v.literal(4), v.literal(5), v.literal(6)),
     lineItems: v.array(lineItemValidator),
     invoiceStorageId: v.id("_storage"),
+    waiverIds: v.array(v.id("customDocuments")),
+    specSheetIds: v.array(v.id("customDocuments")),
   },
   handler: async (
     ctx,
@@ -145,6 +147,33 @@ export const generatePacket = action({
       });
     }
 
+    // Custom contract documents are always included, filled with the same
+    // packet data, and slot in right after the construction contract (index 0).
+    const customContracts = await ctx.runQuery(
+      internal.customDocuments.listCustomDocumentsInternal,
+      { category: "contract" },
+    );
+    const customContractDocs: { filename: string; doc: PDFDocument }[] = [];
+    for (const custom of customContracts) {
+      let fieldMap: Record<string, string> | undefined = custom.fieldMap;
+      if (!fieldMap) {
+        fieldMap = await ctx.runAction(internal.templateMapping.mapCustomDocumentFields, {
+          id: custom._id,
+        });
+      }
+      const blob = await ctx.storage.get(custom.storageId);
+      if (!blob) throw new Error(`Document file missing from storage: ${custom.displayName}`);
+      customContractDocs.push({
+        filename: `${custom.displayName}.pdf`,
+        doc: await fillTemplate(
+          await blob.arrayBuffer(),
+          buildFieldValues(packetData, fieldMap),
+          buildSizeGroups(fieldMap),
+        ),
+      });
+    }
+    docs.splice(1, 0, ...customContractDocs);
+
     // The invoice slots in just before the payment schedule, which is last in
     // DOC_ORDER and must always end the packet.
     const invoiceBlob = await ctx.storage.get(args.invoiceStorageId);
@@ -154,6 +183,25 @@ export const generatePacket = action({
       doc: await PDFDocument.load(await invoiceBlob.arrayBuffer()),
       storageId: args.invoiceStorageId,
     });
+
+    // Selected waivers then spec sheets merge verbatim after the invoice,
+    // still keeping the payment schedule last. No storageId is set so the
+    // clientFiles loop below stores a per-packet copy — deleting a library
+    // document later must not break regeneration.
+    const selectedDocs: { filename: string; doc: PDFDocument }[] = [];
+    for (const id of [...args.waiverIds, ...args.specSheetIds]) {
+      const selected = await ctx.runQuery(internal.customDocuments.getCustomDocumentInternal, {
+        id,
+      });
+      if (!selected) throw new Error(`Selected document no longer exists: ${id}`);
+      const blob = await ctx.storage.get(selected.storageId);
+      if (!blob) throw new Error(`Document file missing from storage: ${selected.displayName}`);
+      selectedDocs.push({
+        filename: `${selected.displayName}.pdf`,
+        doc: await PDFDocument.load(await blob.arrayBuffer()),
+      });
+    }
+    docs.splice(docs.length - 1, 0, ...selectedDocs);
 
     const mergedBytes = await mergeDocuments(docs.map((d) => d.doc));
     const packetStorageId = await ctx.storage.store(

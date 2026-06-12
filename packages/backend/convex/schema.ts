@@ -89,4 +89,17 @@ export default defineSchema({
     // is in flight.
     fieldMap: v.optional(v.record(v.string(), v.string())),
   }).index("by_key", ["key"]),
+
+  // User-uploaded document library. Contracts are AI field-mapped and always
+  // merged into every packet; waivers and spec sheets are immutable PDFs
+  // selected per-packet on the Verify step.
+  customDocuments: defineTable({
+    category: v.union(v.literal("contract"), v.literal("waiver"), v.literal("spec-sheet")),
+    displayName: v.string(),
+    storageId: v.id("_storage"),
+    uploadedAt: v.number(),
+    // Only present for category "contract". Absent while mapping is in
+    // flight; {} if the PDF has no AcroForm fields.
+    fieldMap: v.optional(v.record(v.string(), v.string())),
+  }).index("by_category", ["category"]),
 });
