@@ -5,7 +5,7 @@ import type { Doc, Id } from "@sah-helper/backend/convex/_generated/dataModel";
 import { Button, buttonVariants } from "@sah-helper/ui/components/button";
 import { Skeleton } from "@sah-helper/ui/components/skeleton";
 import { useAction, useQuery } from "convex/react";
-import { DownloadIcon, FileTextIcon, PencilIcon, PlusIcon } from "lucide-react";
+import { DownloadIcon, FileTextIcon, PencilIcon, PlusIcon, SearchIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -19,6 +19,15 @@ export default function SavedInvoicesPage() {
   const buildInvoice = useAction(api.invoiceBuilder.buildInvoice);
   const router = useRouter();
   const [downloadingId, setDownloadingId] = useState<Id<"invoices"> | null>(null);
+  const [searchInput, setSearchInput] = useState("");
+
+  const search = searchInput.trim().toLowerCase();
+  const filteredInvoices = (invoices ?? []).filter(
+    (invoice) =>
+      !search ||
+      invoice.invoiceNumber.toLowerCase().includes(search) ||
+      invoice.name.toLowerCase().includes(search),
+  );
 
   const handleDownload = async (invoice: Doc<"invoices">) => {
     if (downloadingId) return;
@@ -76,43 +85,61 @@ export default function SavedInvoicesPage() {
           </Link>
         </div>
       ) : (
-        <div className="divide-y divide-border rounded-md border border-border bg-card">
-          {invoices.map((invoice) => (
-            <div key={invoice._id} className="flex items-center gap-4 px-4 py-3.5">
-              <div className="min-w-0 flex-1">
-                <p className="mb-0.5 truncate text-[14px] font-semibold">
-                  <span className="font-mono">{invoice.invoiceNumber || "—"}</span>
-                  {invoice.name && <span className="font-normal"> · {invoice.name}</span>}
-                </p>
-                <p className="truncate text-xs text-muted-foreground/70">
-                  {formatCurrency(invoice.total)} · {invoice.lineItems.length}{" "}
-                  {invoice.lineItems.length === 1 ? "item" : "items"} · Updated{" "}
-                  {formatDate(invoice.updatedAt)}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                aria-label={`Download ${invoice.invoiceNumber}`}
-                disabled={downloadingId !== null}
-                onClick={() => void handleDownload(invoice)}
-              >
-                <DownloadIcon className="size-3.5" />
-                <span className="hidden sm:inline">
-                  {downloadingId === invoice._id ? "Building..." : "Download"}
-                </span>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => router.push(`/invoice-builder?id=${invoice._id}`)}
-              >
-                <PencilIcon className="size-3.5" />
-                <span className="hidden sm:inline">Edit</span>
-              </Button>
+        <>
+          <div className="relative mb-3">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search by client name or invoice #"
+              className="h-9 w-full rounded-md border border-border bg-card pr-3 pl-9 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-ring"
+            />
+          </div>
+          {filteredInvoices.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border px-4 py-10 text-center text-xs text-muted-foreground">
+              No invoices match &ldquo;{searchInput.trim()}&rdquo;.
+            </p>
+          ) : (
+            <div className="divide-y divide-border rounded-md border border-border bg-card">
+              {filteredInvoices.map((invoice) => (
+                <div key={invoice._id} className="flex items-center gap-4 px-4 py-3.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="mb-0.5 truncate text-[14px] font-semibold">
+                      <span className="font-mono">{invoice.invoiceNumber || "—"}</span>
+                      {invoice.name && <span className="font-normal"> · {invoice.name}</span>}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground/70">
+                      {formatCurrency(invoice.total)} · {invoice.lineItems.length}{" "}
+                      {invoice.lineItems.length === 1 ? "item" : "items"} · Updated{" "}
+                      {formatDate(invoice.updatedAt)}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Download ${invoice.invoiceNumber}`}
+                    disabled={downloadingId !== null}
+                    onClick={() => void handleDownload(invoice)}
+                  >
+                    <DownloadIcon className="size-3.5" />
+                    <span className="hidden sm:inline">
+                      {downloadingId === invoice._id ? "Building..." : "Download"}
+                    </span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => router.push(`/invoice-builder?id=${invoice._id}`)}
+                  >
+                    <PencilIcon className="size-3.5" />
+                    <span className="hidden sm:inline">Edit</span>
+                  </Button>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   );
