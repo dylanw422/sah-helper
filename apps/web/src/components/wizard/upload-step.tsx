@@ -1,10 +1,16 @@
 "use client";
 
+import { api } from "@sah-helper/backend/convex/_generated/api";
+import type { Doc } from "@sah-helper/backend/convex/_generated/dataModel";
 import { Button } from "@sah-helper/ui/components/button";
 import { Label } from "@sah-helper/ui/components/label";
-import { FileTextIcon, UploadCloudIcon, XIcon } from "lucide-react";
+import { Skeleton } from "@sah-helper/ui/components/skeleton";
+import { useQuery } from "convex/react";
+import { ChevronDownIcon, FileTextIcon, UploadCloudIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
+
+import { formatCurrency } from "@/lib/format";
 
 import { DrawCountSelect, type DrawCount } from "./draw-count-select";
 
@@ -35,18 +41,32 @@ function CornerAccents() {
 
 export function UploadStep({
   onSubmit,
+  onSubmitSaved,
   initialFile,
+  initialSavedInvoice,
   initialDrawCount,
+  busy = false,
 }: {
   onSubmit: (file: File, drawCount: DrawCount) => void;
+  onSubmitSaved: (invoice: Doc<"invoices">, drawCount: DrawCount) => void;
   initialFile?: File | null;
+  initialSavedInvoice?: Doc<"invoices"> | null;
   initialDrawCount?: DrawCount | null;
+  busy?: boolean;
 }) {
   const [file, setFile] = useState<File | null>(initialFile ?? null);
+  const [savedInvoice, setSavedInvoice] = useState<Doc<"invoices"> | null>(
+    initialSavedInvoice ?? null,
+  );
+  const [showSaved, setShowSaved] = useState(false);
   const [drawCount, setDrawCount] = useState<DrawCount | null>(initialDrawCount ?? null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Loaded eagerly so the drawer's content (and therefore its measured auto
+  // height) is stable by the time it animates open.
+  const savedInvoices = useQuery(api.invoiceBuilder.listInvoices);
 
   const handleFile = (f: File | undefined) => {
     setError(null);
@@ -59,6 +79,7 @@ export function UploadStep({
       setError("File is too large. Maximum size is 10MB.");
       return;
     }
+    setSavedInvoice(null);
     setFile(f);
   };
 
@@ -66,7 +87,8 @@ export function UploadStep({
     <div className="mx-auto w-full max-w-xl">
       <h1 className="mb-1 text-xl font-semibold tracking-[-0.025em]">New Packet</h1>
       <p className="mb-6 text-xs text-muted-foreground">
-        Upload an invoice PDF and select the number of draws for this job.
+        Upload an invoice PDF or pick a saved invoice, then select the number of draws for this
+        job.
       </p>
 
       <motion.div
@@ -99,7 +121,38 @@ export function UploadStep({
         />
         <AnimatePresence>{dragOver && <CornerAccents />}</AnimatePresence>
 
-        {file ? (
+        {savedInvoice ? (
+          <>
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: "spring", stiffness: 600, damping: 20 }}
+              className="mb-3 flex size-14 items-center justify-center rounded-md bg-accent text-indigo-600 dark:text-indigo-400"
+            >
+              <FileTextIcon className="size-7" />
+            </motion.div>
+            <p className="text-sm font-medium">
+              <span className="font-mono">{savedInvoice.invoiceNumber || "No number"}</span>
+              {savedInvoice.name && <span> · {savedInvoice.name}</span>}
+            </p>
+            <p className="font-mono text-xs text-muted-foreground tabular-nums">
+              {formatCurrency(savedInvoice.total)} · {savedInvoice.lineItems.length}{" "}
+              {savedInvoice.lineItems.length === 1 ? "item" : "items"}
+            </p>
+            <Button
+              variant="ghost"
+              size="xs"
+              className="mt-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSavedInvoice(null);
+              }}
+            >
+              <XIcon data-icon="inline-start" />
+              Remove
+            </Button>
+          </>
+        ) : file ? (
           <>
             <motion.div
               initial={{ scale: 0.8, opacity: 0 }}
@@ -155,6 +208,76 @@ export function UploadStep({
 
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={() => setShowSaved((s) => !s)}
+          className="mx-auto flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          or select from saved invoices
+          <ChevronDownIcon
+            className={`size-3.5 transition-transform duration-200 ${showSaved ? "rotate-180" : ""}`}
+          />
+        </button>
+
+        <AnimatePresence initial={false}>
+          {showSaved && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="overflow-hidden"
+            >
+              {/* Padding instead of margin: margins are excluded from the
+                  animated height measurement and cause a jump at the end. */}
+              <div className="pt-3">
+                <div className="max-h-56 divide-y divide-border overflow-y-auto rounded-md border border-border bg-card">
+                {savedInvoices === undefined ? (
+                  <div className="space-y-2 p-3">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <Skeleton key={i} className="h-9 w-full" />
+                    ))}
+                  </div>
+                ) : savedInvoices.length === 0 ? (
+                  <p className="px-4 py-6 text-center text-xs text-muted-foreground">
+                    No saved invoices yet. Build one in the Invoice Builder first.
+                  </p>
+                ) : (
+                  savedInvoices.map((invoice) => (
+                    <button
+                      key={invoice._id}
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        setFile(null);
+                        if (inputRef.current) inputRef.current.value = "";
+                        setSavedInvoice(invoice);
+                        setShowSaved(false);
+                      }}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-accent"
+                    >
+                      <FileTextIcon className="size-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-medium">
+                          <span className="font-mono">{invoice.invoiceNumber || "—"}</span>
+                          {invoice.name && <span className="font-normal"> · {invoice.name}</span>}
+                        </span>
+                        <span className="block truncate text-[11px] text-muted-foreground/70">
+                          {formatCurrency(invoice.total)} · {invoice.lineItems.length}{" "}
+                          {invoice.lineItems.length === 1 ? "item" : "items"}
+                        </span>
+                      </span>
+                    </button>
+                  ))
+                )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
       <div className="mt-6 space-y-2">
         <Label htmlFor="draw-count">Draw Count</Label>
         <DrawCountSelect value={drawCount} onChange={setDrawCount} />
@@ -163,10 +286,14 @@ export function UploadStep({
       <Button
         size="lg"
         className="mt-6 w-full"
-        disabled={!file || !drawCount}
-        onClick={() => file && drawCount && onSubmit(file, drawCount)}
+        disabled={(!file && !savedInvoice) || !drawCount || busy}
+        onClick={() => {
+          if (!drawCount) return;
+          if (savedInvoice) onSubmitSaved(savedInvoice, drawCount);
+          else if (file) onSubmit(file, drawCount);
+        }}
       >
-        Process Invoice
+        {busy ? "Preparing Invoice..." : "Process Invoice"}
       </Button>
     </div>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { api } from "@sah-helper/backend/convex/_generated/api";
-import type { Id } from "@sah-helper/backend/convex/_generated/dataModel";
+import type { Doc, Id } from "@sah-helper/backend/convex/_generated/dataModel";
 import { Button } from "@sah-helper/ui/components/button";
 import { Label } from "@sah-helper/ui/components/label";
 import { useAction, useMutation } from "convex/react";
@@ -20,7 +20,7 @@ import { StepIndicator } from "@/components/wizard/step-indicator";
 import { UploadStep } from "@/components/wizard/upload-step";
 import { VerifyStep, type VerifiedData } from "@/components/wizard/verify-step";
 import { consumeInvoiceDraft } from "@/lib/invoice-draft";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDisplayDate } from "@/lib/format";
 
 const EXTRACTION_STEPS = [
   "Uploading invoice...",
@@ -56,6 +56,8 @@ function toStepStates(total: number, doneCount: number, processing: boolean): St
 export default function NewPacketPage() {
   const [phase, setPhase] = useState<WizardPhase>("upload");
   const [file, setFile] = useState<File | null>(null);
+  const [savedInvoice, setSavedInvoice] = useState<Doc<"invoices"> | null>(null);
+  const [preparingSaved, setPreparingSaved] = useState(false);
   const [drawCount, setDrawCount] = useState<DrawCount | null>(null);
   const [extracted, setExtracted] = useState<ExtractedData | null>(null);
   const [invoiceStorageId, setInvoiceStorageId] = useState<Id<"_storage"> | null>(null);
@@ -75,6 +77,7 @@ export default function NewPacketPage() {
   const generateUploadUrl = useMutation(api.uploads.generateUploadUrl);
   const parseInvoice = useAction(api.invoices.parseInvoice);
   const generatePacket = useAction(api.packets.generatePacket);
+  const buildInvoice = useAction(api.invoiceBuilder.buildInvoice);
 
   const clearTimers = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -103,6 +106,7 @@ export default function NewPacketPage() {
   const startExtraction = useCallback(
     async (selectedFile: File, selectedDrawCount: DrawCount) => {
       setFile(selectedFile);
+      setSavedInvoice(null);
       setDrawCount(selectedDrawCount);
       setError(null);
       setDoneCount(0);
@@ -150,6 +154,52 @@ export default function NewPacketPage() {
       }
     },
     [generateUploadUrl, parseInvoice, clearTimers, later],
+  );
+
+  // A saved invoice is already structured data, so AI extraction is skipped;
+  // the PDF is rebuilt only because the packet stores a copy of it.
+  const startFromSaved = useCallback(
+    async (invoice: Doc<"invoices">, selectedDrawCount: DrawCount) => {
+      setSavedInvoice(invoice);
+      setFile(null);
+      setDrawCount(selectedDrawCount);
+      setError(null);
+      setPreparingSaved(true);
+
+      try {
+        const { storageId } = await buildInvoice({
+          name: invoice.name,
+          street: invoice.street,
+          city: invoice.city,
+          state: invoice.state,
+          zip: invoice.zip,
+          phone: invoice.phone,
+          invoiceNumber: invoice.invoiceNumber,
+          caseNumber: invoice.caseNumber,
+          invoiceDate: formatDisplayDate(invoice.invoiceDate),
+          lineItems: invoice.lineItems,
+        });
+        setInvoiceStorageId(storageId);
+        setExtracted({
+          name: invoice.name,
+          street: invoice.street,
+          city: invoice.city,
+          state: invoice.state,
+          zip: invoice.zip,
+          phone: invoice.phone,
+          invoiceNumber: invoice.invoiceNumber,
+          caseNumber: invoice.caseNumber,
+          lineItems: invoice.lineItems,
+          totalMismatchWarning: false,
+        });
+        setPhase("verify");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Something went wrong while preparing the invoice.");
+      } finally {
+        setPreparingSaved(false);
+      }
+    },
+    [buildInvoice],
   );
 
   const startGeneration = useCallback(
@@ -201,6 +251,7 @@ export default function NewPacketPage() {
     clearTimers();
     setPhase("upload");
     setFile(null);
+    setSavedInvoice(null);
     setDrawCount(null);
     setExtracted(null);
     setInvoiceStorageId(null);
@@ -244,7 +295,14 @@ export default function NewPacketPage() {
               }}
             />
           ) : phase === "upload" ? (
-            <UploadStep onSubmit={startExtraction} initialFile={file} initialDrawCount={drawCount} />
+            <UploadStep
+              onSubmit={startExtraction}
+              onSubmitSaved={startFromSaved}
+              initialFile={file}
+              initialSavedInvoice={savedInvoice}
+              initialDrawCount={drawCount}
+              busy={preparingSaved}
+            />
           ) : phase === "extracting" ? (
             <ProcessingView
               title="Reading your invoice"
