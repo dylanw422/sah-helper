@@ -7,6 +7,8 @@ import { Loader2Icon, UploadIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { convertToPdf, UnsupportedFileError } from "@/lib/convert-to-pdf";
+
 export function FileDropZone({ clientId }: { clientId: Id<"clients"> }) {
   const generateUploadUrl = useMutation(api.uploads.generateUploadUrl);
   const addClientFile = useMutation(api.clientFiles.addClientFile);
@@ -17,32 +19,31 @@ export function FileDropZone({ clientId }: { clientId: Id<"clients"> }) {
 
   const handleFiles = async (fileList: FileList | File[]) => {
     const files = Array.from(fileList);
-    const pdfs = files.filter((f) => f.type === "application/pdf");
-    if (pdfs.length < files.length) {
-      toast.error("Only PDF files can be added to a packet.");
-    }
-    if (pdfs.length === 0) return;
+    if (files.length === 0) return;
 
-    setUploadingCount((c) => c + pdfs.length);
+    setUploadingCount((c) => c + files.length);
     await Promise.all(
-      pdfs.map(async (file) => {
+      files.map(async (file) => {
         try {
+          const pdf = await convertToPdf(file);
           const uploadUrl = await generateUploadUrl();
           const res = await fetch(uploadUrl, {
             method: "POST",
-            headers: { "Content-Type": file.type },
-            body: file,
+            headers: { "Content-Type": pdf.type },
+            body: pdf,
           });
           if (!res.ok) throw new Error("Upload failed");
           const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
           await addClientFile({
             clientId,
             storageId,
-            filename: file.name,
+            filename: pdf.name,
             type: "uploaded",
           });
-        } catch {
-          toast.error(`Could not upload ${file.name}.`);
+        } catch (err) {
+          toast.error(
+            err instanceof UnsupportedFileError ? err.message : `Could not upload ${file.name}.`,
+          );
         } finally {
           setUploadingCount((c) => c - 1);
         }
@@ -78,13 +79,12 @@ export function FileDropZone({ clientId }: { clientId: Id<"clients"> }) {
       ) : (
         <>
           <UploadIcon className="size-3.5" />
-          Drop PDFs here, or click to browse
+          Drop files here, or click to browse
         </>
       )}
       <input
         ref={inputRef}
         type="file"
-        accept="application/pdf"
         multiple
         className="hidden"
         onClick={(e) => e.stopPropagation()}

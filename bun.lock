@@ -33,6 +33,7 @@
         "motion": "^12.40.0",
         "next": "^16.2.0",
         "next-themes": "catalog:",
+        "pdf-lib": "^1.17.1",
         "react": "catalog:",
         "react-dom": "catalog:",
         "sonner": "catalog:",
