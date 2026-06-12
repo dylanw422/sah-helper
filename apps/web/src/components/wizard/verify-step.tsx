@@ -13,7 +13,7 @@ import {
   TableRow,
 } from "@sah-helper/ui/components/table";
 import { ArrowDownIcon, ArrowLeftIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { formatCurrency } from "@/lib/format";
 
@@ -43,6 +43,11 @@ type EditableLineItem = {
   qty: string;
   unitPrice: string;
 };
+
+// Must match isProfitItem in the backend's drawSchedule.ts.
+function isProfitRow(row: { description: string }): boolean {
+  return /profit/i.test(row.description);
+}
 
 function rowAmount(row: EditableLineItem): number {
   const qty = parseFloat(row.qty) || 0;
@@ -81,7 +86,15 @@ export function VerifyStep({
     })),
   );
 
-  const total = useMemo(() => rows.reduce((sum, row) => sum + rowAmount(row), 0), [rows]);
+  // Profit rows store a percentage in qty; their amount derives from the
+  // subtotal of the regular rows rather than qty * unitPrice.
+  const regularSubtotal = rows.reduce(
+    (sum, row) => (isProfitRow(row) ? sum : sum + rowAmount(row)),
+    0,
+  );
+  const amountFor = (row: EditableLineItem): number =>
+    isProfitRow(row) ? regularSubtotal * ((parseFloat(row.qty) || 0) / 100) : rowAmount(row);
+  const total = rows.reduce((sum, row) => sum + amountFor(row), 0);
   // The final draw is a 20% holdback of the contract total.
   const holdback = total * 0.2;
 
@@ -111,12 +124,12 @@ export function VerifyStep({
     onGenerate({
       ...fields,
       lineItems: rows
-        .filter((row) => row.description.trim() !== "" || rowAmount(row) > 0)
+        .filter((row) => row.description.trim() !== "" || amountFor(row) > 0)
         .map((row) => ({
           description: row.description,
           qty: parseFloat(row.qty) || 0,
           unitPrice: parseFloat(row.unitPrice) || 0,
-          amount: rowAmount(row),
+          amount: amountFor(row),
         })),
     });
   };
@@ -245,10 +258,11 @@ export function VerifyStep({
                         inputMode="decimal"
                         value={row.unitPrice}
                         onChange={(e) => setRow(i, "unitPrice", e.target.value)}
+                        disabled={isProfitRow(row)}
                       />
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
-                      {formatCurrency(rowAmount(row))}
+                      {formatCurrency(amountFor(row))}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center">

@@ -30,6 +30,24 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_createdAt", ["createdAt"]),
 
+  invoices: defineTable({
+    name: v.string(),
+    street: v.string(),
+    city: v.string(),
+    state: v.string(),
+    zip: v.string(),
+    phone: v.string(),
+    invoiceNumber: v.string(),
+    caseNumber: v.string(),
+    // Raw yyyy-mm-dd input value; formatted for display only at PDF time
+    invoiceDate: v.string(),
+    // Last item is always the Profit row (qty = percentage)
+    lineItems: v.array(lineItemValidator),
+    total: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_updatedAt", ["updatedAt"]),
+
   clientFiles: defineTable({
     clientId: v.id("clients"),
     storageId: v.id("_storage"),

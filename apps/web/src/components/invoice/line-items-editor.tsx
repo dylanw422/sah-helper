@@ -10,6 +10,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { Reorder, useDragControls } from "motion/react";
+import { useEffect, useRef, useState } from "react";
 
 import { formatCurrency } from "@/lib/format";
 
@@ -20,8 +21,14 @@ export type LineItemRow = {
   unitPrice: string;
 };
 
+export const PROFIT_DESCRIPTION = "Profit";
+
 export function createLineItemRow(): LineItemRow {
   return { id: crypto.randomUUID(), description: "", qty: "1", unitPrice: "0" };
+}
+
+export function createProfitRow(): LineItemRow {
+  return { id: crypto.randomUUID(), description: PROFIT_DESCRIPTION, qty: "20", unitPrice: "0" };
 }
 
 export function lineItemRowAmount(row: LineItemRow): number {
@@ -40,20 +47,37 @@ export function LineItemsEditor({
   rows: LineItemRow[];
   onChange: (rows: LineItemRow[]) => void;
 }) {
-  const total = rows.reduce((sum, row) => sum + lineItemRowAmount(row), 0);
-  // The final draw is a 20% holdback of the contract total.
-  const holdback = total * 0.2;
+  // Last row is always the profit percentage row.
+  const regularRows = rows.slice(0, -1);
+  const profitRow = rows[rows.length - 1]!;
+  const regularSubtotal = regularRows.reduce((sum, row) => sum + lineItemRowAmount(row), 0);
+  const profitPct = parseFloat(profitRow.qty) || 0;
+  const profitAmount = regularSubtotal * (profitPct / 100);
+  const total = regularSubtotal + profitAmount;
+
+  // ID of the row whose description input should receive focus on next render.
+  const [focusId, setFocusId] = useState<string | null>(null);
 
   const setRow = (id: string, patch: Partial<LineItemRow>) =>
     onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
 
   const moveRow = (id: string, dir: -1 | 1) => {
-    const i = rows.findIndex((row) => row.id === id);
+    const i = regularRows.findIndex((row) => row.id === id);
     const j = i + dir;
-    if (i < 0 || j < 0 || j >= rows.length) return;
-    const copy = [...rows];
+    if (i < 0 || j < 0 || j >= regularRows.length) return;
+    const copy = [...regularRows];
     [copy[i], copy[j]] = [copy[j], copy[i]];
-    onChange(copy);
+    onChange([...copy, profitRow]);
+  };
+
+  const addRow = () => {
+    const row = createLineItemRow();
+    onChange([...regularRows, row, profitRow]);
+    setFocusId(row.id);
+  };
+
+  const handleReorder = (reordered: LineItemRow[]) => {
+    onChange([...reordered, profitRow]);
   };
 
   return (
@@ -62,12 +86,6 @@ export function LineItemsEditor({
         List items in construction order (demo before install, etc.) — draws are split in this
         order. Drag the handle or use the arrows to reorder.
       </p>
-
-      {rows.length > 10 && (
-        <div className="border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-600 dark:text-amber-400">
-          Only the first 10 line items appear itemized on the contract templates.
-        </div>
-      )}
 
       <div className="text-xs">
         <div
@@ -81,26 +99,47 @@ export function LineItemsEditor({
           <span />
         </div>
 
-        <Reorder.Group axis="y" values={rows} onReorder={onChange} className="relative">
-          {rows.map((row, i) => (
+        <Reorder.Group axis="y" values={regularRows} onReorder={handleReorder} className="relative">
+          {regularRows.map((row, i) => (
             <LineItemRowView
               key={row.id}
               row={row}
               index={i}
-              count={rows.length}
+              count={regularRows.length}
+              focusDescription={focusId === row.id}
+              onFocused={() => setFocusId(null)}
               onPatch={(patch) => setRow(row.id, patch)}
               onMove={(dir) => moveRow(row.id, dir)}
-              onDelete={() => onChange(rows.filter((r) => r.id !== row.id))}
+              onDelete={() => onChange([...regularRows.filter((r) => r.id !== row.id), profitRow])}
+              onAddRow={addRow}
             />
           ))}
         </Reorder.Group>
+
+        {/* Profit row — always last, pinned */}
+        <div className={`${GRID_COLS} border-t bg-muted/30 py-2`}>
+          <span />
+          <span className="px-1 font-medium text-foreground">{PROFIT_DESCRIPTION}</span>
+          <div className="relative">
+            <Input
+              type="number"
+              inputMode="decimal"
+              value={profitRow.qty}
+              onChange={(e) => setRow(profitRow.id, { qty: e.target.value })}
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
+              %
+            </span>
+          </div>
+          <span className="px-1 text-muted-foreground/50">—</span>
+          <span className="px-1 text-right font-mono tabular-nums">
+            {formatCurrency(profitAmount)}
+          </span>
+          <span />
+        </div>
       </div>
 
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => onChange([...rows, createLineItemRow()])}
-      >
+      <Button variant="outline" size="sm" onClick={addRow}>
         <PlusIcon data-icon="inline-start" />
         Add Line Item
       </Button>
@@ -108,13 +147,13 @@ export function LineItemsEditor({
       <div className="flex flex-col items-end gap-1 border-t pt-3 text-xs">
         <div className="flex w-56 justify-between text-muted-foreground">
           <span>Subtotal</span>
-          <span className="font-mono tabular-nums">{formatCurrency(total)}</span>
+          <span className="font-mono tabular-nums">{formatCurrency(regularSubtotal)}</span>
         </div>
         <div className="flex w-56 justify-between text-muted-foreground">
-          <span>Final Draw Holdback (20%)</span>
-          <span className="font-mono tabular-nums">{formatCurrency(holdback)}</span>
+          <span>Profit ({profitPct}%)</span>
+          <span className="font-mono tabular-nums">{formatCurrency(profitAmount)}</span>
         </div>
-        <div className="flex w-56 justify-between text-sm font-semibold">
+<div className="flex w-56 justify-between text-sm font-semibold">
           <span>Total</span>
           <span className="font-mono tabular-nums">{formatCurrency(total)}</span>
         </div>
@@ -127,18 +166,32 @@ function LineItemRowView({
   row,
   index,
   count,
+  focusDescription,
+  onFocused,
   onPatch,
   onMove,
   onDelete,
+  onAddRow,
 }: {
   row: LineItemRow;
   index: number;
   count: number;
+  focusDescription: boolean;
+  onFocused: () => void;
   onPatch: (patch: Partial<LineItemRow>) => void;
   onMove: (dir: -1 | 1) => void;
   onDelete: () => void;
+  onAddRow: () => void;
 }) {
   const dragControls = useDragControls();
+  const descriptionRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (focusDescription) {
+      descriptionRef.current?.focus();
+      onFocused();
+    }
+  }, [focusDescription, onFocused]);
 
   return (
     <Reorder.Item
@@ -165,8 +218,12 @@ function LineItemRowView({
         <GripVerticalIcon className="size-4" />
       </button>
       <Input
+        ref={descriptionRef}
         value={row.description}
-        onChange={(e) => onPatch({ description: e.target.value })}
+        onChange={(e) => {
+          const v = e.target.value;
+          onPatch({ description: v.length > 0 ? v[0]!.toUpperCase() + v.slice(1) : v });
+        }}
         placeholder="Description"
       />
       <Input
@@ -180,6 +237,12 @@ function LineItemRowView({
         inputMode="decimal"
         value={row.unitPrice}
         onChange={(e) => onPatch({ unitPrice: e.target.value })}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onAddRow();
+          }
+        }}
       />
       <span className="px-1 text-right font-mono tabular-nums">
         {formatCurrency(lineItemRowAmount(row))}

@@ -55,6 +55,10 @@ const USER_PROMPT = `Extract the following from this invoice:
   "total": 126000.00
 }
 
+For percentage-based line items (e.g. a profit line showing "20%" as the quantity),
+set "qty" to the percentage as a plain number (20, not "20%" and not 0.2), set
+"unitPrice" to 0, and set "amount" to the dollar amount shown on the invoice.
+
 IMPORTANT: List lineItems in logical construction sequence — the order the work would
 actually be performed on the job site — NOT the order they appear on the invoice:
 demolition/removal/teardown first, then site/structural/framing work, rough plumbing/
@@ -67,6 +71,16 @@ Return only the JSON object. No markdown code blocks.`;
 
 function uint8ToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
+}
+
+// Coerces values like "20%", "$2,500.00", or " 1.5 " into numbers.
+function toNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = parseFloat(value.replace(/[$,%\s]/g, ""));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
 }
 
 function tryParseInvoiceJson(text: string): Omit<ExtractedInvoiceData, "totalMismatchWarning"> | null {
@@ -103,9 +117,9 @@ function tryParseInvoiceJson(text: string): Omit<ExtractedInvoiceData, "totalMis
         )
         .map((item: Record<string, unknown>) => ({
           description: typeof item.description === "string" ? item.description : "",
-          qty: typeof item.qty === "number" ? item.qty : 1,
-          unitPrice: typeof item.unitPrice === "number" ? item.unitPrice : 0,
-          amount: typeof item.amount === "number" ? item.amount : 0,
+          qty: toNumber(item.qty, 1),
+          unitPrice: toNumber(item.unitPrice, 0),
+          amount: toNumber(item.amount, 0),
         })),
       subtotal: typeof parsed.subtotal === "number" ? parsed.subtotal : parsed.total,
       total: parsed.total,

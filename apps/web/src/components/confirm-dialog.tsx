@@ -48,7 +48,7 @@ export function ConfirmDialog({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 8 }}
             transition={{ duration: 0.2 }}
-            className="w-full max-w-sm border border-border bg-card p-5"
+            className="w-full max-w-sm rounded-md border border-border bg-card p-5"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="mb-1.5 text-sm font-semibold">{title}</h2>

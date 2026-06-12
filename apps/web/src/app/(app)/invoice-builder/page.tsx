@@ -7,25 +7,39 @@ import { Card, CardContent, CardHeader, CardTitle } from "@sah-helper/ui/compone
 import { Input } from "@sah-helper/ui/components/input";
 import { Label } from "@sah-helper/ui/components/label";
 import { Skeleton } from "@sah-helper/ui/components/skeleton";
-import { useAction, useQuery } from "convex/react";
-import { ArrowRightIcon, BuildingIcon, DownloadIcon, SettingsIcon } from "lucide-react";
+import { useAction, useMutation, useQuery } from "convex/react";
+import {
+  ArrowRightIcon,
+  BuildingIcon,
+  CheckIcon,
+  DownloadIcon,
+  FilesIcon,
+  SaveIcon,
+  SettingsIcon,
+} from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   createLineItemRow,
+  createProfitRow,
   LineItemsEditor,
   lineItemRowAmount,
+  PROFIT_DESCRIPTION,
   type LineItemRow,
 } from "@/components/invoice/line-items-editor";
 import type { VerifiedData } from "@/components/wizard/verify-step";
 import { downloadFile } from "@/lib/download";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDisplayDate, maskPhone } from "@/lib/format";
 import { writeInvoiceDraft } from "@/lib/invoice-draft";
 
 type BuiltInvoice = { storageId: Id<"_storage">; url: string };
+
+type PendingNav = { kind: "link"; href: string } | { kind: "startPacket" };
 
 function todayInputValue(): string {
   const now = new Date();
@@ -34,14 +48,18 @@ function todayInputValue(): string {
   return `${now.getFullYear()}-${month}-${day}`;
 }
 
-function formatDisplayDate(inputValue: string): string {
-  const date = new Date(`${inputValue}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return inputValue;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
+function savedLineItemsToRows(items: VerifiedData["lineItems"]): LineItemRow[] {
+  const rows: LineItemRow[] = items.map((item) => ({
+    id: crypto.randomUUID(),
+    description: item.description,
+    qty: String(item.qty),
+    unitPrice: String(item.unitPrice),
+  }));
+  if (rows[rows.length - 1]?.description !== PROFIT_DESCRIPTION) {
+    rows.push(createProfitRow());
+  }
+  if (rows.length === 1) rows.unshift(createLineItemRow());
+  return rows;
 }
 
 const CLIENT_FIELDS = [
@@ -53,11 +71,40 @@ const CLIENT_FIELDS = [
   { key: "phone", label: "Phone Number" },
 ] as const;
 
+function BuilderSkeleton() {
+  return (
+    <div className="mx-auto w-full max-w-5xl px-4 py-8">
+      <Skeleton className="mb-2 h-6 w-48" />
+      <Skeleton className="mb-8 h-3 w-72" />
+      <div className="space-y-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-32 w-full" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function InvoiceBuilderPage() {
+  return (
+    <Suspense fallback={<BuilderSkeleton />}>
+      <InvoiceBuilder />
+    </Suspense>
+  );
+}
+
+function InvoiceBuilder() {
   const router = useRouter();
+  const idParam = useSearchParams().get("id");
+  const invoiceId = (idParam as Id<"invoices"> | null) ?? null;
   const settings = useQuery(api.settings.getSettings);
-  const suggestedNumber = useQuery(api.invoiceBuilder.suggestInvoiceNumber);
+  const suggestedNumber = useQuery(
+    api.invoiceBuilder.suggestInvoiceNumber,
+    invoiceId ? "skip" : {},
+  );
+  const saved = useQuery(api.invoiceBuilder.getInvoice, invoiceId ? { id: invoiceId } : "skip");
   const buildInvoice = useAction(api.invoiceBuilder.buildInvoice);
+  const saveInvoice = useMutation(api.invoiceBuilder.saveInvoice);
 
   const [fields, setFields] = useState({
     name: "",
@@ -70,12 +117,38 @@ export default function InvoiceBuilderPage() {
     caseNumber: "",
   });
   const [invoiceDate, setInvoiceDate] = useState(todayInputValue);
-  const [rows, setRows] = useState<LineItemRow[]>(() => [createLineItemRow()]);
+  const [rows, setRows] = useState<LineItemRow[]>(() => [createLineItemRow(), createProfitRow()]);
   const [numberHydrated, setNumberHydrated] = useState(false);
   // Cached build result; cleared whenever any form field changes so the next
   // action builds a fresh PDF.
   const [built, setBuilt] = useState<BuiltInvoice | null>(null);
   const [pending, setPending] = useState<"download" | "start" | null>(null);
+  // Tracks whether the form differs from the last-saved (or freshly loaded) state.
+  const [dirty, setDirty] = useState(false);
+  const [savedHydrated, setSavedHydrated] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [pendingNav, setPendingNav] = useState<PendingNav | null>(null);
+
+  // While the form has unsaved changes, intercept clicks on internal links
+  // (including the app header) and confirm before navigating away.
+  useEffect(() => {
+    if (!dirty) return;
+    const onClickCapture = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const anchor = (e.target as HTMLElement | null)?.closest?.("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target === "_blank") return;
+      const href = anchor.getAttribute("href");
+      if (!href || !href.startsWith("/")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPendingNav({ kind: "link", href });
+    };
+    document.addEventListener("click", onClickCapture, true);
+    return () => document.removeEventListener("click", onClickCapture, true);
+  }, [dirty]);
 
   useEffect(() => {
     if (suggestedNumber !== undefined && !numberHydrated) {
@@ -84,44 +157,96 @@ export default function InvoiceBuilderPage() {
     }
   }, [suggestedNumber, numberHydrated]);
 
+  useEffect(() => {
+    if (!invoiceId || savedHydrated) return;
+    if (saved === null) {
+      toast.error("That invoice no longer exists.");
+      router.replace("/invoice-builder");
+      return;
+    }
+    if (saved === undefined) return;
+    setFields({
+      name: saved.name,
+      street: saved.street,
+      city: saved.city,
+      state: saved.state,
+      zip: saved.zip,
+      phone: saved.phone,
+      invoiceNumber: saved.invoiceNumber,
+      caseNumber: saved.caseNumber,
+    });
+    setInvoiceDate(saved.invoiceDate);
+    setRows(savedLineItemsToRows(saved.lineItems));
+    setDirty(false);
+    setSavedHydrated(true);
+  }, [invoiceId, saved, savedHydrated, router]);
+
+  useEffect(() => {
+    return () => {
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+    };
+  }, []);
+
   const setField = (key: keyof typeof fields, value: string) => {
     setBuilt(null);
+    setDirty(true);
     setFields((f) => ({ ...f, [key]: value }));
   };
 
   const handleRowsChange = (next: LineItemRow[]) => {
     setBuilt(null);
+    setDirty(true);
     setRows(next);
   };
 
-  const total = rows.reduce((sum, row) => sum + lineItemRowAmount(row), 0);
-  const holdback = total * 0.2;
+  const regularRows = rows.slice(0, -1);
+  const profitRow = rows[rows.length - 1]!;
+  const regularSubtotal = regularRows.reduce((sum, row) => sum + lineItemRowAmount(row), 0);
+  const profitPct = parseFloat(profitRow.qty) || 0;
+  const profitAmount = regularSubtotal * (profitPct / 100);
+  const total = regularSubtotal + profitAmount;
 
   const canBuild =
     fields.name.trim() !== "" &&
     fields.street.trim() !== "" &&
     fields.caseNumber.trim() !== "" &&
-    rows.length > 0 &&
-    rows.some((row) => row.description.trim() !== "");
+    regularRows.some((row) => row.description.trim() !== "");
 
-  const toVerifiedData = (): VerifiedData => ({
-    name: fields.name,
-    street: fields.street,
-    city: fields.city,
-    state: fields.state,
-    zip: fields.zip,
-    phone: fields.phone,
-    invoiceNumber: fields.invoiceNumber,
-    caseNumber: fields.caseNumber.trim(),
-    lineItems: rows
-      .filter((row) => row.description.trim() !== "" || lineItemRowAmount(row) > 0)
-      .map((row) => ({
-        description: row.description,
-        qty: parseFloat(row.qty) || 0,
-        unitPrice: parseFloat(row.unitPrice) || 0,
-        amount: lineItemRowAmount(row),
-      })),
-  });
+  const toVerifiedData = (): VerifiedData => {
+    const regularRows = rows.slice(0, -1);
+    const profitRow = rows[rows.length - 1]!;
+    const filteredRegular = regularRows.filter(
+      (row) => row.description.trim() !== "" || lineItemRowAmount(row) > 0,
+    );
+    const regularSubtotal = filteredRegular.reduce((sum, row) => sum + lineItemRowAmount(row), 0);
+    const profitPct = parseFloat(profitRow.qty) || 0;
+    const profitAmount = regularSubtotal * (profitPct / 100);
+
+    return {
+      name: fields.name,
+      street: fields.street,
+      city: fields.city,
+      state: fields.state,
+      zip: fields.zip,
+      phone: fields.phone,
+      invoiceNumber: fields.invoiceNumber,
+      caseNumber: fields.caseNumber.trim(),
+      lineItems: [
+        ...filteredRegular.map((row) => ({
+          description: row.description,
+          qty: parseFloat(row.qty) || 0,
+          unitPrice: parseFloat(row.unitPrice) || 0,
+          amount: lineItemRowAmount(row),
+        })),
+        {
+          description: PROFIT_DESCRIPTION,
+          qty: profitPct,
+          unitPrice: 0,
+          amount: profitAmount,
+        },
+      ],
+    };
+  };
 
   const ensureBuilt = async (): Promise<BuiltInvoice> => {
     if (built) return built;
@@ -132,6 +257,34 @@ export default function InvoiceBuilderPage() {
     });
     setBuilt(result);
     return result;
+  };
+
+  const canSave = fields.name.trim() !== "";
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const data = toVerifiedData();
+      const id = await saveInvoice({
+        ...data,
+        invoiceDate,
+        id: invoiceId ?? undefined,
+      });
+      if (!invoiceId) {
+        // Keep the association across refreshes; subsequent saves update this record.
+        setSavedHydrated(true);
+        router.replace(`/invoice-builder?id=${id}`);
+      }
+      setDirty(false);
+      setJustSaved(true);
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => setJustSaved(false), 1500);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save the invoice.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDownload = async () => {
@@ -147,7 +300,7 @@ export default function InvoiceBuilderPage() {
     }
   };
 
-  const handleStartPacket = async () => {
+  const startPacket = async () => {
     if (pending) return;
     setPending("start");
     try {
@@ -160,18 +313,27 @@ export default function InvoiceBuilderPage() {
     }
   };
 
-  if (settings === undefined) {
-    return (
-      <div className="mx-auto w-full max-w-5xl px-4 py-8">
-        <Skeleton className="mb-2 h-6 w-48" />
-        <Skeleton className="mb-8 h-3 w-72" />
-        <div className="space-y-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-32 w-full" />
-          ))}
-        </div>
-      </div>
-    );
+  const handleStartPacket = () => {
+    if (dirty) {
+      setPendingNav({ kind: "startPacket" });
+      return;
+    }
+    void startPacket();
+  };
+
+  const confirmLeave = () => {
+    const nav = pendingNav;
+    setPendingNav(null);
+    if (!nav) return;
+    if (nav.kind === "link") {
+      router.push(nav.href as Route);
+    } else {
+      void startPacket();
+    }
+  };
+
+  if (settings === undefined || (invoiceId && !savedHydrated)) {
+    return <BuilderSkeleton />;
   }
 
   if (settings === null) {
@@ -192,16 +354,26 @@ export default function InvoiceBuilderPage() {
     );
   }
 
-  const itemCount = rows.filter(
-    (row) => row.description.trim() !== "" || lineItemRowAmount(row) > 0,
-  ).length;
+  const itemCount =
+    regularRows.filter((row) => row.description.trim() !== "" || lineItemRowAmount(row) > 0)
+      .length + 1; // +1 for profit row
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-8">
-      <h1 className="mb-1 text-xl font-semibold tracking-[-0.025em]">Invoice Builder</h1>
-      <p className="mb-6 text-xs text-muted-foreground">
-        Compose a new invoice. Drag line items to set construction order.
-      </p>
+      <div className="mb-6 flex items-end justify-between gap-4">
+        <div>
+          <h1 className="mb-1 text-xl font-semibold tracking-[-0.025em]">Invoice Builder</h1>
+          <p className="text-xs text-muted-foreground">
+            {invoiceId
+              ? `Editing ${fields.invoiceNumber || "saved invoice"} — saving updates this invoice.`
+              : "Compose a new invoice. Drag line items to set construction order."}
+          </p>
+        </div>
+        <Link href="/invoices" className={buttonVariants({ variant: "outline", size: "lg" })}>
+          <FilesIcon data-icon="inline-start" />
+          Saved Invoices
+        </Link>
+      </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="min-w-0 space-y-6">
@@ -220,8 +392,8 @@ export default function InvoiceBuilderPage() {
                   {settings.contractorLicense && ` · License #${settings.contractorLicense}`}
                 </p>
                 <p className="text-muted-foreground">
-                  {settings.contractorStreet}, {settings.contractorCity},{" "}
-                  {settings.contractorState} {settings.contractorZip}
+                  {settings.contractorStreet}, {settings.contractorCity}, {settings.contractorState}{" "}
+                  {settings.contractorZip}
                 </p>
                 <p className="text-muted-foreground">
                   {settings.contractorPhone} · {settings.contractorEmail}
@@ -248,7 +420,10 @@ export default function InvoiceBuilderPage() {
                     <Input
                       id={`field-${key}`}
                       value={fields[key]}
-                      onChange={(e) => setField(key, e.target.value)}
+                      inputMode={key === "phone" ? "tel" : undefined}
+                      onChange={(e) =>
+                        setField(key, key === "phone" ? maskPhone(e.target.value) : e.target.value)
+                      }
                     />
                   </div>
                 ))}
@@ -278,6 +453,7 @@ export default function InvoiceBuilderPage() {
                     value={invoiceDate}
                     onChange={(e) => {
                       setBuilt(null);
+                      setDirty(true);
                       setInvoiceDate(e.target.value);
                     }}
                   />
@@ -329,10 +505,6 @@ export default function InvoiceBuilderPage() {
                   <dt className="text-muted-foreground">Subtotal</dt>
                   <dd className="font-mono tabular-nums">{formatCurrency(total)}</dd>
                 </div>
-                <div className="flex justify-between gap-2">
-                  <dt className="text-muted-foreground">Holdback (20%)</dt>
-                  <dd className="font-mono tabular-nums">{formatCurrency(holdback)}</dd>
-                </div>
                 <div className="flex justify-between gap-2 border-t pt-2 text-sm font-semibold">
                   <dt>Total</dt>
                   <dd className="font-mono tabular-nums">{formatCurrency(total)}</dd>
@@ -340,6 +512,23 @@ export default function InvoiceBuilderPage() {
               </dl>
 
               <div className="flex flex-col gap-2">
+                <Button
+                  variant="outline"
+                  disabled={!canSave || saving || justSaved}
+                  onClick={handleSave}
+                >
+                  {justSaved ? (
+                    <CheckIcon data-icon="inline-start" />
+                  ) : (
+                    <SaveIcon data-icon="inline-start" />
+                  )}
+                  {justSaved ? "Saved" : saving ? "Saving..." : "Save Invoice"}
+                  {dirty && !saving && !justSaved && (
+                    <span aria-label="Unsaved changes" className="text-muted-foreground">
+                      *
+                    </span>
+                  )}
+                </Button>
                 <Button
                   variant="outline"
                   disabled={!canBuild || pending !== null}
@@ -357,6 +546,15 @@ export default function InvoiceBuilderPage() {
           </Card>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={pendingNav !== null}
+        title="Leave without saving?"
+        description="You have unsaved changes that will be lost if you leave this page."
+        confirmLabel="Leave"
+        onConfirm={confirmLeave}
+        onCancel={() => setPendingNav(null)}
+      />
     </div>
   );
 }

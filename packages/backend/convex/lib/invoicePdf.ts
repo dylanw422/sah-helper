@@ -2,22 +2,26 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf
 
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
-const MARGIN = 54;
+const MARGIN = 60;
 const TABLE_WIDTH = PAGE_WIDTH - MARGIN * 2;
-const BORDER = rgb(0.6, 0.6, 0.6);
-const ZEBRA = rgb(0.955, 0.955, 0.965);
+
+const INK = rgb(0.09, 0.1, 0.12);
+const MUTED = rgb(0.45, 0.47, 0.5);
+const HAIRLINE = rgb(0.85, 0.86, 0.88);
+
 const TEXT_SIZE = 10;
-const LINE_HEIGHT = 13;
+const LABEL_SIZE = 7.5;
+const LINE_HEIGHT = 14;
 
 // Column layout: Description | Qty | Unit Price | Amount
 const COL_QTY_WIDTH = 50;
 const COL_UNIT_WIDTH = 90;
 const COL_AMOUNT_WIDTH = 90;
 const COL_DESC_WIDTH = TABLE_WIDTH - COL_QTY_WIDTH - COL_UNIT_WIDTH - COL_AMOUNT_WIDTH;
-const COL_DESC_X = MARGIN + 8;
-const COL_QTY_RIGHT = MARGIN + COL_DESC_WIDTH + COL_QTY_WIDTH - 8;
+const COL_DESC_X = MARGIN;
+const COL_QTY_RIGHT = MARGIN + COL_DESC_WIDTH + COL_QTY_WIDTH;
 const COL_UNIT_RIGHT = COL_QTY_RIGHT + COL_UNIT_WIDTH;
-const COL_AMOUNT_RIGHT = MARGIN + TABLE_WIDTH - 8;
+const COL_AMOUNT_RIGHT = MARGIN + TABLE_WIDTH;
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -85,154 +89,175 @@ export async function buildInvoicePdf(input: InvoicePdfInput): Promise<PDFDocume
     }
   };
 
-  const drawRightAligned = (text: string, rightX: number, baselineY: number, f: PDFFont, size: number) => {
+  const drawRightAligned = (
+    text: string,
+    rightX: number,
+    baselineY: number,
+    f: PDFFont,
+    size: number,
+    color = INK,
+  ) => {
     page.drawText(text, {
       x: rightX - f.widthOfTextAtSize(text, size),
       y: baselineY,
       size,
       font: f,
+      color,
     });
   };
 
-  const drawDivider = () => {
+  const drawRule = (fromX: number, toX: number, atY: number, thickness: number, color = INK) => {
     page.drawLine({
-      start: { x: MARGIN, y },
-      end: { x: PAGE_WIDTH - MARGIN, y },
-      thickness: 0.75,
-      color: BORDER,
+      start: { x: fromX, y: atY },
+      end: { x: toX, y: atY },
+      thickness,
+      color,
     });
   };
 
-  // ── Header: INVOICE + number/date ──
-  const titleSize = 22;
-  page.drawText("INVOICE", { x: MARGIN, y: y - titleSize, size: titleSize, font: bold });
-  drawRightAligned(`Invoice #: ${input.invoiceNumber}`, PAGE_WIDTH - MARGIN, y - 12, bold, TEXT_SIZE);
-  drawRightAligned(`Issue Date: ${input.invoiceDate}`, PAGE_WIDTH - MARGIN, y - 12 - LINE_HEIGHT, font, TEXT_SIZE);
-  y -= titleSize + 16;
+  // ── Header band: INVOICE + number/date ──
+  const titleSize = 28;
+  page.drawText("INVOICE", { x: MARGIN, y: y - titleSize, size: titleSize, font: bold, color: INK });
 
-  drawDivider();
-  y -= 18;
+  const rightEdge = PAGE_WIDTH - MARGIN;
+  const numberY = y - 12;
+  const dateY = numberY - LINE_HEIGHT;
+  const numberWidth = bold.widthOfTextAtSize(input.invoiceNumber, TEXT_SIZE);
+  const dateWidth = font.widthOfTextAtSize(input.invoiceDate, TEXT_SIZE);
+  drawRightAligned(input.invoiceNumber, rightEdge, numberY, bold, TEXT_SIZE, INK);
+  drawRightAligned("NO.", rightEdge - numberWidth - 6, numberY, bold, LABEL_SIZE, MUTED);
+  drawRightAligned(input.invoiceDate, rightEdge, dateY, font, TEXT_SIZE, INK);
+  drawRightAligned("DATE", rightEdge - dateWidth - 6, dateY, bold, LABEL_SIZE, MUTED);
+  y -= titleSize + 14;
 
-  // ── FROM / BILL TO columns ──
+  drawRule(MARGIN, rightEdge, y, 1, INK);
+  y -= 28;
+
+  // ── Parties: FROM / ISSUED TO columns ──
   const colRightX = MARGIN + TABLE_WIDTH / 2;
   const c = input.contractor;
   const fromLines = [
-    c.contractorCompanyName,
     c.contractorName,
     c.contractorLicense ? `License #${c.contractorLicense}` : "",
     c.contractorStreet,
     `${c.contractorCity}, ${c.contractorState} ${c.contractorZip}`,
-    `Phone: ${c.contractorPhone}`,
+    c.contractorPhone,
     c.contractorEmail,
   ].filter(Boolean);
 
   const cl = input.client;
-  const billToLines = [
-    `Name: ${cl.name}`,
-    `Address: ${cl.street}`,
-    `${cl.city}, ${cl.state}`,
-    `Zip Code: ${cl.zip}`,
-    `Phone: ${cl.phone}`,
-  ];
+  const issuedToLines = [cl.street, `${cl.city}, ${cl.state} ${cl.zip}`, cl.phone].filter(Boolean);
 
-  page.drawText("FROM", { x: MARGIN, y: y - TEXT_SIZE, size: TEXT_SIZE, font: bold });
-  page.drawText("ISSUED TO", { x: colRightX, y: y - TEXT_SIZE, size: TEXT_SIZE, font: bold });
-  y -= 18;
+  page.drawText("FROM", { x: MARGIN, y: y - LABEL_SIZE, size: LABEL_SIZE, font: bold, color: MUTED });
+  page.drawText("ISSUED TO", {
+    x: colRightX,
+    y: y - LABEL_SIZE,
+    size: LABEL_SIZE,
+    font: bold,
+    color: MUTED,
+  });
+  y -= LABEL_SIZE + 10;
 
   const blockTop = y;
+  page.drawText(c.contractorCompanyName, { x: MARGIN, y: y - 11, size: 11, font: bold, color: INK });
+  y -= LINE_HEIGHT + 2;
   for (const line of fromLines) {
-    page.drawText(line, { x: MARGIN, y: y - TEXT_SIZE, size: TEXT_SIZE, font });
-    y -= LINE_HEIGHT + 2;
+    page.drawText(line, { x: MARGIN, y: y - TEXT_SIZE, size: TEXT_SIZE, font, color: MUTED });
+    y -= LINE_HEIGHT;
   }
-  let yRight = blockTop;
-  for (const line of billToLines) {
-    page.drawText(line, { x: colRightX, y: yRight - TEXT_SIZE, size: TEXT_SIZE, font });
-    yRight -= LINE_HEIGHT + 2;
-  }
-  y = Math.min(y, yRight) - 6;
 
-  page.drawText("SAH Case Number:", { x: MARGIN, y: y - TEXT_SIZE, size: TEXT_SIZE, font: bold });
-  page.drawText(input.caseNumber, {
-    x: MARGIN + bold.widthOfTextAtSize("SAH Case Number:", TEXT_SIZE) + 6,
-    y: y - TEXT_SIZE,
-    size: TEXT_SIZE,
-    font,
+  let yRight = blockTop;
+  page.drawText(cl.name, { x: colRightX, y: yRight - 11, size: 11, font: bold, color: INK });
+  yRight -= LINE_HEIGHT + 2;
+  for (const line of issuedToLines) {
+    page.drawText(line, { x: colRightX, y: yRight - TEXT_SIZE, size: TEXT_SIZE, font, color: MUTED });
+    yRight -= LINE_HEIGHT;
+  }
+
+  // Case number sits under the ISSUED TO block
+  yRight -= 8;
+  const caseLabel = "SAH CASE NUMBER";
+  page.drawText(caseLabel, {
+    x: colRightX,
+    y: yRight - LABEL_SIZE,
+    size: LABEL_SIZE,
+    font: bold,
+    color: MUTED,
   });
-  y -= LINE_HEIGHT + 12;
+  page.drawText(input.caseNumber, {
+    x: colRightX + bold.widthOfTextAtSize(caseLabel, LABEL_SIZE) + 8,
+    y: yRight - TEXT_SIZE + 1,
+    size: TEXT_SIZE,
+    font: bold,
+    color: INK,
+  });
+  yRight -= TEXT_SIZE;
+
+  y = Math.min(y, yRight) - 24;
 
   // ── Line item table ──
-  const headerHeight = 22;
+  const headerHeight = LABEL_SIZE + 8;
   const drawTableHeader = () => {
-    ensureSpace(headerHeight + LINE_HEIGHT + 9);
-    page.drawRectangle({
-      x: MARGIN,
-      y: y - headerHeight,
-      width: TABLE_WIDTH,
-      height: headerHeight,
-      color: rgb(0.16, 0.18, 0.25),
+    ensureSpace(headerHeight + LINE_HEIGHT + 10);
+    page.drawText("DESCRIPTION", {
+      x: COL_DESC_X,
+      y: y - LABEL_SIZE,
+      size: LABEL_SIZE,
+      font: bold,
+      color: MUTED,
     });
-    const headerY = y - headerHeight + 7;
-    const white = rgb(1, 1, 1);
-    page.drawText("DESCRIPTION", { x: COL_DESC_X, y: headerY, size: 9, font: bold, color: white });
-    const drawHeaderRight = (text: string, rightX: number) => {
-      page.drawText(text, {
-        x: rightX - bold.widthOfTextAtSize(text, 9),
-        y: headerY,
-        size: 9,
-        font: bold,
-        color: white,
-      });
-    };
-    drawHeaderRight("QTY", COL_QTY_RIGHT);
-    drawHeaderRight("UNIT PRICE", COL_UNIT_RIGHT);
-    drawHeaderRight("AMOUNT", COL_AMOUNT_RIGHT);
+    drawRightAligned("QTY", COL_QTY_RIGHT, y - LABEL_SIZE, bold, LABEL_SIZE, MUTED);
+    drawRightAligned("UNIT PRICE", COL_UNIT_RIGHT, y - LABEL_SIZE, bold, LABEL_SIZE, MUTED);
+    drawRightAligned("AMOUNT", COL_AMOUNT_RIGHT, y - LABEL_SIZE, bold, LABEL_SIZE, MUTED);
     y -= headerHeight;
+    drawRule(MARGIN, COL_AMOUNT_RIGHT, y, 0.5, HAIRLINE);
   };
 
   drawTableHeader();
 
-  input.lineItems.forEach((item, index) => {
-    const lines = wrapLines(font, item.description, TEXT_SIZE, COL_DESC_WIDTH - 16);
-    const rowHeight = lines.length * LINE_HEIGHT + 9;
+  for (const item of input.lineItems) {
+    const lines = wrapLines(font, item.description, TEXT_SIZE, COL_DESC_WIDTH - 12);
+    const rowHeight = lines.length * LINE_HEIGHT + 10;
     if (y - rowHeight < MARGIN) {
       page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
       y = PAGE_HEIGHT - MARGIN;
       drawTableHeader();
     }
-    page.drawRectangle({
-      x: MARGIN,
-      y: y - rowHeight,
-      width: TABLE_WIDTH,
-      height: rowHeight,
-      color: index % 2 === 1 ? ZEBRA : undefined,
-      borderColor: BORDER,
-      borderWidth: 0.5,
-    });
     lines.forEach((line, lineIndex) => {
       page.drawText(line, {
         x: COL_DESC_X,
-        y: y - 16 - lineIndex * LINE_HEIGHT,
+        y: y - 17 - lineIndex * LINE_HEIGHT,
         size: TEXT_SIZE,
         font,
+        color: INK,
       });
     });
-    const valueY = y - 16;
-    drawRightAligned(String(item.qty), COL_QTY_RIGHT, valueY, font, TEXT_SIZE);
-    drawRightAligned(formatCurrency(item.unitPrice), COL_UNIT_RIGHT, valueY, font, TEXT_SIZE);
-    drawRightAligned(formatCurrency(item.amount), COL_AMOUNT_RIGHT, valueY, font, TEXT_SIZE);
+    const valueY = y - 17;
+    const isProfitRow = item.description === "Profit";
+    if (isProfitRow) {
+      drawRightAligned(`${item.qty}%`, COL_QTY_RIGHT, valueY, font, TEXT_SIZE, INK);
+      // unit price column intentionally blank for profit row
+    } else {
+      drawRightAligned(String(item.qty), COL_QTY_RIGHT, valueY, font, TEXT_SIZE, INK);
+      drawRightAligned(formatCurrency(item.unitPrice), COL_UNIT_RIGHT, valueY, font, TEXT_SIZE, INK);
+    }
+    drawRightAligned(formatCurrency(item.amount), COL_AMOUNT_RIGHT, valueY, font, TEXT_SIZE, INK);
     y -= rowHeight;
-  });
+    drawRule(MARGIN, COL_AMOUNT_RIGHT, y, 0.5, HAIRLINE);
+  }
 
   // ── Totals ──
   const total = input.lineItems.reduce((sum, item) => sum + item.amount, 0);
-  y -= 14;
-  ensureSpace(LINE_HEIGHT * 2 + 10);
-  const labelRightX = COL_UNIT_RIGHT;
-  drawRightAligned("Subtotal:", labelRightX, y - TEXT_SIZE, font, TEXT_SIZE);
-  drawRightAligned(formatCurrency(total), COL_AMOUNT_RIGHT, y - TEXT_SIZE, font, TEXT_SIZE);
-  y -= LINE_HEIGHT + 4;
-  drawRightAligned("Total:", labelRightX, y - 11, bold, 11);
-  drawRightAligned(formatCurrency(total), COL_AMOUNT_RIGHT, y - 11, bold, 11);
+  const totalsLeftX = COL_AMOUNT_RIGHT - (COL_UNIT_WIDTH + COL_AMOUNT_WIDTH);
+  ensureSpace(24 + (LINE_HEIGHT + 10) + 12 + 16 + 14);
+  y -= 24;
+  page.drawText("Subtotal", { x: totalsLeftX, y: y - TEXT_SIZE, size: TEXT_SIZE, font, color: MUTED });
+  drawRightAligned(formatCurrency(total), COL_AMOUNT_RIGHT, y - TEXT_SIZE, font, TEXT_SIZE, INK);
+  y -= LINE_HEIGHT + 10;
+  drawRule(totalsLeftX, COL_AMOUNT_RIGHT, y, 1, INK);
+  y -= 12;
+  page.drawText("TOTAL", { x: totalsLeftX, y: y - 16, size: 16, font: bold, color: INK });
+  drawRightAligned(formatCurrency(total), COL_AMOUNT_RIGHT, y - 16, bold, 16, INK);
 
   return doc;
 }
