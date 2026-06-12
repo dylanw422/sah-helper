@@ -183,6 +183,7 @@
   html {
     @apply font-sans;
     scroll-behavior: smooth;
+    scrollbar-gutter: stable;
   }
   body {
     @apply font-sans bg-background text-foreground;
