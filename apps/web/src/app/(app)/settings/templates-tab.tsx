@@ -20,7 +20,7 @@ import { formatDate } from "@/lib/format";
 
 type FieldInfo = { name: string; type: string };
 
-export default function InspectTemplatesView() {
+export function TemplatesTab() {
   const templates = useQuery(api.templates.listTemplates);
   const generateUploadUrl = useMutation(api.templates.generateTemplateUploadUrl);
   const registerTemplate = useMutation(api.templates.registerTemplate);
@@ -78,13 +78,7 @@ export default function InspectTemplatesView() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-8">
-      <h1 className="mb-1 text-2xl font-semibold tracking-tight">PDF Template Inspector</h1>
-      <p className="mb-6 text-xs text-muted-foreground">
-        Upload the 12 blank VA templates. Field mapping happens automatically on upload — AI
-        matches each PDF&apos;s form fields to packet data. Use Inspect to review the result.
-      </p>
-
+    <div>
       <input
         ref={fileInputRef}
         type="file"

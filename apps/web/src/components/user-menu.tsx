@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@sah-helper/ui/components/dropdown-menu";
 import { useQuery } from "convex/react";
-import { SettingsIcon, UserIcon, WrenchIcon } from "lucide-react";
+import { SettingsIcon, UserIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
@@ -35,12 +35,6 @@ export default function UserMenu() {
             <SettingsIcon className="size-3.5" />
             Settings
           </DropdownMenuItem>
-          {process.env.NODE_ENV === "development" && (
-            <DropdownMenuItem onClick={() => router.push("/dev/inspect-templates")}>
-              <WrenchIcon className="size-3.5" />
-              Inspect Templates
-            </DropdownMenuItem>
-          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"

@@ -12,6 +12,7 @@ import {
   BuildingIcon,
   CheckIcon,
   CopyIcon,
+  FileTextIcon,
   PlusIcon,
   Trash2Icon,
   UsersIcon,
@@ -22,6 +23,8 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+
+import { TemplatesTab } from "./templates-tab";
 
 const FIELDS = [
   { key: "contractorCompanyName", label: "Company Name" },
@@ -49,13 +52,22 @@ const EMPTY: SettingsForm = {
   contractorLicense: "",
 };
 
-type Tab = "contractor" | "users";
+type Tab = "contractor" | "users" | "templates";
+
+const TAB_DESCRIPTIONS: Record<Tab, string> = {
+  contractor: "Contractor information used to fill all VA documents.",
+  users: "Manage who can sign in to this application.",
+  templates:
+    "Upload the 12 blank VA templates. Field mapping happens automatically on upload — AI matches each PDF's form fields to packet data. Use Inspect to review the result.",
+};
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("contractor");
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
+    <div
+      className={`mx-auto w-full px-4 py-8 ${tab === "templates" ? "max-w-5xl" : "max-w-3xl"}`}
+    >
       <Link
         href="/dashboard"
         className="mb-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
@@ -65,11 +77,7 @@ export default function SettingsPage() {
       </Link>
 
       <h1 className="mb-1 text-xl font-semibold tracking-[-0.025em]">Settings</h1>
-      <p className="mb-8 text-xs text-muted-foreground">
-        {tab === "contractor"
-          ? "Contractor information used to fill all VA documents."
-          : "Manage who can sign in to this application."}
-      </p>
+      <p className="mb-8 text-xs text-muted-foreground">{TAB_DESCRIPTIONS[tab]}</p>
 
       <div className="flex flex-col gap-8 sm:flex-row">
         <nav className="flex shrink-0 gap-2 sm:w-44 sm:flex-col sm:gap-1.5">
@@ -97,10 +105,28 @@ export default function SettingsPage() {
             <UsersIcon className="size-3.5" />
             Users
           </button>
+          <button
+            type="button"
+            onClick={() => setTab("templates")}
+            className={`flex items-center gap-2.5 rounded-sm px-3 py-2 text-xs font-medium transition-colors ${
+              tab === "templates"
+                ? "bg-accent text-indigo-700 ring-1 ring-[rgb(var(--accent-rgb)/0.25)] dark:text-indigo-300"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <FileTextIcon className="size-3.5" />
+            PDF Templates
+          </button>
         </nav>
 
         <div className="min-w-0 flex-1">
-          {tab === "contractor" ? <ContractorTab /> : <UsersTab />}
+          {tab === "contractor" ? (
+            <ContractorTab />
+          ) : tab === "users" ? (
+            <UsersTab />
+          ) : (
+            <TemplatesTab />
+          )}
         </div>
       </div>
     </div>
