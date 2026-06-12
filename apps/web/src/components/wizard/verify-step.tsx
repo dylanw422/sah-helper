@@ -162,7 +162,7 @@ export function VerifyStep({
   ] as const;
 
   return (
-    <div className="mx-auto w-full max-w-3xl">
+    <div className="mx-auto w-full max-w-4xl">
       <h1 className="mb-1 text-xl font-semibold tracking-[-0.025em]">Verify Extracted Data</h1>
       <p className="mb-6 text-xs text-muted-foreground">
         Review the data extracted from the invoice and correct any mistakes before generating the
@@ -264,7 +264,7 @@ export function VerifyStep({
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-1/2">Description</TableHead>
-                  <TableHead className="w-20">Qty</TableHead>
+                  <TableHead className="w-24">Qty</TableHead>
                   <TableHead className="w-32">Unit Price</TableHead>
                   <TableHead className="w-28 text-right">Amount</TableHead>
                   <TableHead className="w-24" />
@@ -399,7 +399,7 @@ function DocumentSelectCard({
         <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-3 gap-x-6 gap-y-3">
+        <div className="grid grid-cols-4 gap-x-6 gap-y-3">
           {docs.map((doc) => (
             <div key={doc._id} className="flex items-center gap-2">
               <Checkbox
