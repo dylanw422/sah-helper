@@ -11,10 +11,8 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import {
   ArrowRightIcon,
   BuildingIcon,
-  CheckIcon,
   DownloadIcon,
   FilesIcon,
-  SaveIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { Route } from "next";
@@ -127,9 +125,11 @@ function InvoiceBuilder() {
   const [dirty, setDirty] = useState(false);
   const [savedHydrated, setSavedHydrated] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [justSaved, setJustSaved] = useState(false);
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pendingNav, setPendingNav] = useState<PendingNav | null>(null);
+  // Incremented on every edit; a save only clears `dirty` if no edits landed
+  // while the save request was in flight.
+  const editVersion = useRef(0);
+  const [autoSaveQueued, setAutoSaveQueued] = useState(false);
 
   // While the form has unsaved changes, intercept clicks on internal links
   // (including the app header) and confirm before navigating away.
@@ -181,21 +181,19 @@ function InvoiceBuilder() {
     setSavedHydrated(true);
   }, [invoiceId, saved, savedHydrated, router]);
 
-  useEffect(() => {
-    return () => {
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-    };
-  }, []);
-
-  const setField = (key: keyof typeof fields, value: string) => {
+  const markChanged = () => {
+    editVersion.current += 1;
     setBuilt(null);
     setDirty(true);
+  };
+
+  const setField = (key: keyof typeof fields, value: string) => {
+    markChanged();
     setFields((f) => ({ ...f, [key]: value }));
   };
 
   const handleRowsChange = (next: LineItemRow[]) => {
-    setBuilt(null);
-    setDirty(true);
+    markChanged();
     setRows(next);
   };
 
@@ -265,6 +263,7 @@ function InvoiceBuilder() {
     if (saving) return;
     setSaving(true);
     try {
+      const version = editVersion.current;
       const data = toVerifiedData();
       const id = await saveInvoice({
         ...data,
@@ -276,16 +275,23 @@ function InvoiceBuilder() {
         setSavedHydrated(true);
         router.replace(`/invoice-builder?id=${id}`);
       }
-      setDirty(false);
-      setJustSaved(true);
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-      savedTimer.current = setTimeout(() => setJustSaved(false), 1500);
+      if (editVersion.current === version) {
+        setDirty(false);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not save the invoice.");
     } finally {
       setSaving(false);
     }
   };
+
+  // Auto-save when focus leaves a form field. If a save is already in flight,
+  // stay queued until it settles so edits made mid-save are persisted too.
+  useEffect(() => {
+    if (!autoSaveQueued || saving) return;
+    setAutoSaveQueued(false);
+    if (dirty && canSave) void handleSave();
+  });
 
   const handleDownload = async () => {
     if (pending) return;
@@ -332,6 +338,13 @@ function InvoiceBuilder() {
     }
   };
 
+  // If an auto-save settles while the "leave without saving?" prompt is up,
+  // nothing is unsaved anymore — proceed with what the user asked for.
+  useEffect(() => {
+    if (!pendingNav || dirty || saving) return;
+    confirmLeave();
+  });
+
   if (settings === undefined || (invoiceId && !savedHydrated)) {
     return <BuilderSkeleton />;
   }
@@ -375,7 +388,12 @@ function InvoiceBuilder() {
         </Link>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <div
+        className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_280px]"
+        onBlur={() => {
+          if (dirty) setAutoSaveQueued(true);
+        }}
+      >
         <div className="min-w-0 space-y-6">
           <Card>
             <CardHeader>
@@ -452,8 +470,7 @@ function InvoiceBuilder() {
                     type="date"
                     value={invoiceDate}
                     onChange={(e) => {
-                      setBuilt(null);
-                      setDirty(true);
+                      markChanged();
                       setInvoiceDate(e.target.value);
                     }}
                   />
@@ -512,23 +529,6 @@ function InvoiceBuilder() {
               </dl>
 
               <div className="flex flex-col gap-2">
-                <Button
-                  variant="outline"
-                  disabled={!canSave || saving || justSaved}
-                  onClick={handleSave}
-                >
-                  {justSaved ? (
-                    <CheckIcon data-icon="inline-start" />
-                  ) : (
-                    <SaveIcon data-icon="inline-start" />
-                  )}
-                  {justSaved ? "Saved" : saving ? "Saving..." : "Save Invoice"}
-                  {dirty && !saving && !justSaved && (
-                    <span aria-label="Unsaved changes" className="text-muted-foreground">
-                      *
-                    </span>
-                  )}
-                </Button>
                 <Button
                   variant="outline"
                   disabled={!canBuild || pending !== null}
