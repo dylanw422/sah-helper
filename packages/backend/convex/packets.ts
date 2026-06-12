@@ -103,7 +103,7 @@ export const generatePacket = action({
       { lineItems: args.lineItems },
     );
 
-    const docs: { filename: string; doc: PDFDocument }[] = [];
+    const docs: { filename: string; doc: PDFDocument; storageId?: Id<"_storage"> }[] = [];
     for (const docName of DOC_ORDER) {
       if ((GENERATED_DOCS as readonly string[]).includes(docName)) {
         docs.push({
@@ -145,12 +145,17 @@ export const generatePacket = action({
       });
     }
 
-    // The original invoice goes into the packet as the final document
+    // The invoice slots in just before the payment schedule, which is last in
+    // DOC_ORDER and must always end the packet.
     const invoiceBlob = await ctx.storage.get(args.invoiceStorageId);
     if (!invoiceBlob) throw new Error("Invoice file missing from storage.");
-    const invoiceDoc = await PDFDocument.load(await invoiceBlob.arrayBuffer());
+    docs.splice(docs.length - 1, 0, {
+      filename: "Invoice.pdf",
+      doc: await PDFDocument.load(await invoiceBlob.arrayBuffer()),
+      storageId: args.invoiceStorageId,
+    });
 
-    const mergedBytes = await mergeDocuments([...docs.map((d) => d.doc), invoiceDoc]);
+    const mergedBytes = await mergeDocuments(docs.map((d) => d.doc));
     const packetStorageId = await ctx.storage.store(
       new Blob([mergedBytes as BlobPart], { type: "application/pdf" }),
     );
@@ -172,29 +177,24 @@ export const generatePacket = action({
     });
 
     // Store each filled document individually so the file drawer can list and
-    // re-merge them later.
+    // re-merge them later. The invoice blob already lives in storage, so it
+    // keeps its existing storageId.
     for (let i = 0; i < docs.length; i++) {
-      const docBytes = await docs[i].doc.save();
-      const individualStorageId = await ctx.storage.store(
-        new Blob([docBytes as BlobPart], { type: "application/pdf" }),
-      );
+      let storageId = docs[i].storageId;
+      if (!storageId) {
+        const docBytes = await docs[i].doc.save();
+        storageId = await ctx.storage.store(
+          new Blob([docBytes as BlobPart], { type: "application/pdf" }),
+        );
+      }
       await ctx.runMutation(api.clientFiles.addClientFile, {
         clientId,
-        storageId: individualStorageId,
+        storageId,
         filename: docs[i].filename,
         type: "generated",
         order: i,
       });
     }
-
-    // The invoice blob already lives in storage — register it directly
-    await ctx.runMutation(api.clientFiles.addClientFile, {
-      clientId,
-      storageId: args.invoiceStorageId,
-      filename: "Invoice.pdf",
-      type: "generated",
-      order: docs.length,
-    });
 
     return { clientId, packetStorageId };
   },

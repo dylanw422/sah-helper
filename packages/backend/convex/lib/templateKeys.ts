@@ -3,16 +3,20 @@ export const DRAW_DEPENDENT_DOCS = [
   "payment-schedule",
 ] as const;
 
-export const STATIC_DOCS = ["va-addendum"] as const;
-
 // Built programmatically at packet time (see lib/scopeOfWorkPdf.ts) — no
 // uploaded template required.
 export const GENERATED_DOCS = ["scope-of-work"] as const;
 
-// Merge order is fixed: contract, payment schedule, addendum, scope of work.
+// Merge order is fixed: contract, addendum, scope of work, then the invoice
+// (inserted in packets.ts), with the payment schedule always last.
 // The builder spec sheet (VA 26-1852) is intentionally NOT part of the packet —
 // the contractor fills it manually.
-export const DOC_ORDER = [...DRAW_DEPENDENT_DOCS, ...STATIC_DOCS, ...GENERATED_DOCS] as const;
+export const DOC_ORDER = [
+  "construction-contract",
+  "va-addendum",
+  "scope-of-work",
+  "payment-schedule",
+] as const;
 
 export type DocName = (typeof DOC_ORDER)[number];
 export type GeneratedDocName = (typeof GENERATED_DOCS)[number];

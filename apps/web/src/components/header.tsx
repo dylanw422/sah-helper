@@ -13,6 +13,7 @@ import UserMenu from "./user-menu";
 
 const NAV_ITEMS: { href: Route; label: string }[] = [
   { href: "/dashboard", label: "Clients" },
+  { href: "/invoice-builder", label: "Invoice Builder" },
   { href: "/new-packet", label: "New Packet" },
   { href: "/settings", label: "Settings" },
 ];

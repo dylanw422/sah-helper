@@ -17,7 +17,7 @@ import { useMemo, useState } from "react";
 
 import { formatCurrency } from "@/lib/format";
 
-import type { DrawCount } from "./upload-step";
+import type { DrawCount } from "./draw-count-select";
 
 export type VerifiedLineItem = {
   description: string;

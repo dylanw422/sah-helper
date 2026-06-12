@@ -3,20 +3,24 @@
 import { api } from "@sah-helper/backend/convex/_generated/api";
 import type { Id } from "@sah-helper/backend/convex/_generated/dataModel";
 import { Button } from "@sah-helper/ui/components/button";
+import { Label } from "@sah-helper/ui/components/label";
 import { useAction, useMutation } from "convex/react";
 import { AlertCircleIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CompleteStep } from "@/components/wizard/complete-step";
+import { DrawCountSelect, type DrawCount } from "@/components/wizard/draw-count-select";
 import {
   ProcessingStepList,
   ProgressBar,
   type StepState,
 } from "@/components/wizard/processing-steps";
 import { StepIndicator } from "@/components/wizard/step-indicator";
-import { UploadStep, type DrawCount } from "@/components/wizard/upload-step";
+import { UploadStep } from "@/components/wizard/upload-step";
 import { VerifyStep, type VerifiedData } from "@/components/wizard/verify-step";
+import { consumeInvoiceDraft } from "@/lib/invoice-draft";
+import { formatCurrency } from "@/lib/format";
 
 const EXTRACTION_STEPS = [
   "Uploading invoice...",
@@ -28,16 +32,16 @@ const EXTRACTION_STEPS = [
 
 const GENERATION_STEPS = [
   "Filling Construction Contract...",
-  "Filling Payment Schedule...",
   "Filling VA Addendum...",
   "Filling Builder Spec Sheet...",
   "Filling Scope of Work...",
+  "Filling Payment Schedule...",
   "Merging documents...",
   "Saving to client record...",
   "Packet ready!",
 ] as const;
 
-type WizardPhase = "upload" | "extracting" | "verify" | "generating" | "complete";
+type WizardPhase = "upload" | "extracting" | "draw-count" | "verify" | "generating" | "complete";
 
 type ExtractedData = VerifiedData & { totalMismatchWarning: boolean };
 
@@ -63,6 +67,7 @@ export default function NewPacketPage() {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [doneCount, setDoneCount] = useState(0);
+  const [fromBuilder, setFromBuilder] = useState(false);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -79,6 +84,17 @@ export default function NewPacketPage() {
   }, []);
 
   useEffect(() => clearTimers, [clearTimers]);
+
+  // A draft written by the Invoice Builder skips upload + AI extraction:
+  // the data is already structured, only the draw count is missing.
+  useEffect(() => {
+    const draft = consumeInvoiceDraft();
+    if (!draft) return;
+    setInvoiceStorageId(draft.invoiceStorageId);
+    setExtracted({ ...draft.data, totalMismatchWarning: false });
+    setFromBuilder(true);
+    setPhase("draw-count");
+  }, []);
 
   const later = useCallback((fn: () => void, ms: number) => {
     timeoutsRef.current.push(setTimeout(fn, ms));
@@ -192,10 +208,17 @@ export default function NewPacketPage() {
     setResult(null);
     setError(null);
     setDoneCount(0);
+    setFromBuilder(false);
   }, [clearTimers]);
 
   const stepIndex =
-    phase === "upload" ? 0 : phase === "extracting" ? 1 : phase === "verify" ? 2 : 3;
+    phase === "upload"
+      ? 0
+      : phase === "extracting" || phase === "draw-count"
+        ? 1
+        : phase === "verify"
+          ? 2
+          : 3;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-8">
@@ -228,12 +251,19 @@ export default function NewPacketPage() {
               steps={EXTRACTION_STEPS}
               doneCount={doneCount}
             />
+          ) : phase === "draw-count" && extracted ? (
+            <DrawCountStep
+              data={extracted}
+              drawCount={drawCount}
+              onDrawCountChange={setDrawCount}
+              onContinue={() => setPhase("verify")}
+            />
           ) : phase === "verify" && extracted && drawCount ? (
             <VerifyStep
               initial={verified ?? extracted}
               drawCount={drawCount}
               totalMismatchWarning={extracted.totalMismatchWarning}
-              onBack={() => setPhase("upload")}
+              onBack={() => setPhase(fromBuilder ? "draw-count" : "upload")}
               onGenerate={startGeneration}
             />
           ) : phase === "generating" ? (
@@ -280,6 +310,47 @@ function ProcessingView({
         steps={steps}
         states={toStepStates(steps.length, doneCount, doneCount < steps.length)}
       />
+    </div>
+  );
+}
+
+function DrawCountStep({
+  data,
+  drawCount,
+  onDrawCountChange,
+  onContinue,
+}: {
+  data: ExtractedData;
+  drawCount: DrawCount | null;
+  onDrawCountChange: (value: DrawCount) => void;
+  onContinue: () => void;
+}) {
+  const total = data.lineItems.reduce((sum, item) => sum + item.amount, 0);
+  return (
+    <div className="mx-auto w-full max-w-md pt-6">
+      <h1 className="mb-1 text-xl font-semibold tracking-[-0.025em]">Almost there</h1>
+      <p className="mb-6 text-xs text-muted-foreground">
+        Your invoice is ready. Select the number of draws for this job to continue.
+      </p>
+
+      <div className="mb-6 rounded-md border border-border bg-card px-4 py-3 text-xs">
+        <p className="font-medium">
+          Invoice ready: {data.invoiceNumber || "No number"} · {data.name}
+        </p>
+        <p className="mt-0.5 text-muted-foreground">
+          <span className="font-mono tabular-nums">{formatCurrency(total)}</span> ·{" "}
+          {data.lineItems.length} line item{data.lineItems.length === 1 ? "" : "s"}
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="draw-count">Draw Count</Label>
+        <DrawCountSelect value={drawCount} onChange={onDrawCountChange} />
+      </div>
+
+      <Button size="lg" className="mt-6 w-full" disabled={!drawCount} onClick={onContinue}>
+        Continue to Verify
+      </Button>
     </div>
   );
 }

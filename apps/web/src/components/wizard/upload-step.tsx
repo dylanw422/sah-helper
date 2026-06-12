@@ -2,14 +2,13 @@
 
 import { Button } from "@sah-helper/ui/components/button";
 import { Label } from "@sah-helper/ui/components/label";
-import { NativeSelect } from "@sah-helper/ui/components/native-select";
 import { FileTextIcon, UploadCloudIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
 
-const MAX_SIZE_BYTES = 10 * 1024 * 1024;
+import { DrawCountSelect, type DrawCount } from "./draw-count-select";
 
-export type DrawCount = 4 | 5 | 6;
+const MAX_SIZE_BYTES = 10 * 1024 * 1024;
 
 function CornerAccents() {
   const corners = [
@@ -158,18 +157,7 @@ export function UploadStep({
 
       <div className="mt-6 space-y-2">
         <Label htmlFor="draw-count">Draw Count</Label>
-        <NativeSelect
-          id="draw-count"
-          value={drawCount ?? ""}
-          onChange={(e) => setDrawCount(Number(e.target.value) as DrawCount)}
-        >
-          <option value="" disabled>
-            Select draw count...
-          </option>
-          <option value="4">4 Draws</option>
-          <option value="5">5 Draws</option>
-          <option value="6">6 Draws</option>
-        </NativeSelect>
+        <DrawCountSelect value={drawCount} onChange={setDrawCount} />
       </div>
 
       <Button
