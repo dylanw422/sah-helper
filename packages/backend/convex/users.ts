@@ -18,6 +18,7 @@ export const listUsers = query({
     return rows.map((r) => ({
       _id: r._id,
       email: r.email,
+      name: r.name ?? null,
       passwordSet: r.passwordSet,
       code: r.passwordSet ? null : (r.code ?? null),
       createdAt: r.createdAt,
@@ -39,12 +40,16 @@ export const passwordSetupStatus = query({
 });
 
 export const addUser = action({
-  args: { email: v.string() },
+  args: { email: v.string(), name: v.string() },
   handler: async (ctx, args) => {
     await requireAuth(ctx);
     const email = args.email.trim().toLowerCase();
+    const name = args.name.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new Error("Invalid email address");
+    }
+    if (!name) {
+      throw new Error("Name is required");
     }
     const existing = await ctx.runQuery(internal.users.getByEmail, { email });
     if (existing) {
@@ -52,13 +57,13 @@ export const addUser = action({
     }
 
     const code = generateCode();
-    await ctx.runMutation(internal.users.insertAuthorizedUser, { email, code });
+    await ctx.runMutation(internal.users.insertAuthorizedUser, { email, name, code });
     try {
       await createAuth(ctx).api.signUpEmail({
         body: {
           email,
           password: code,
-          name: email.split("@")[0]!,
+          name,
         },
       });
     } catch (err) {
@@ -147,10 +152,11 @@ export const getByEmail = internalQuery({
 });
 
 export const insertAuthorizedUser = internalMutation({
-  args: { email: v.string(), code: v.string() },
+  args: { email: v.string(), name: v.optional(v.string()), code: v.string() },
   handler: async (ctx, args) => {
     await ctx.db.insert("authorizedUsers", {
       email: args.email,
+      name: args.name,
       code: args.code,
       passwordSet: false,
       createdAt: Date.now(),

@@ -73,6 +73,7 @@ export default defineSchema({
 
   authorizedUsers: defineTable({
     email: v.string(),
+    name: v.optional(v.string()),
     // 6-digit first-login code; doubles as the initial password. Cleared
     // once the user sets a real password.
     code: v.optional(v.string()),

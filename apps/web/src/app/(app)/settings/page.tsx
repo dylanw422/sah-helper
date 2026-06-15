@@ -255,6 +255,7 @@ function UsersTab() {
   const users = useQuery(api.users.listUsers);
   const addUser = useAction(api.users.addUser);
   const removeUser = useAction(api.users.removeUser);
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [adding, setAdding] = useState(false);
   const [newInvite, setNewInvite] = useState<{ email: string; code: string } | null>(null);
@@ -280,13 +281,15 @@ function UsersTab() {
   };
 
   const handleAdd = async () => {
-    const trimmed = email.trim();
-    if (!trimmed) return;
+    const trimmedEmail = email.trim();
+    const trimmedName = name.trim();
+    if (!trimmedEmail || !trimmedName) return;
     setAdding(true);
     try {
-      const { code } = await addUser({ email: trimmed });
-      setNewInvite({ email: trimmed.toLowerCase(), code });
+      const { code } = await addUser({ email: trimmedEmail, name: trimmedName });
+      setNewInvite({ email: trimmedEmail.toLowerCase(), code });
       setEmail("");
+      setName("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not add user.");
     } finally {
@@ -302,27 +305,53 @@ function UsersTab() {
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-border bg-card p-5">
-        <Label
-          htmlFor="new-user-email"
-          className="text-[10px] font-medium tracking-[0.1em] text-muted-foreground/70 uppercase"
-        >
-          Add User by Email
-        </Label>
-        <div className="mt-1.5 flex gap-2">
-          <Input
-            id="new-user-email"
-            type="email"
-            placeholder="user@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleAdd();
-            }}
-          />
-          <Button onClick={handleAdd} disabled={adding || !email.trim()}>
-            <PlusIcon className="size-4" />
-            {adding ? "Adding..." : "Add"}
-          </Button>
+        <p className="text-[10px] font-medium tracking-[0.1em] text-muted-foreground/70 uppercase mb-3">
+          Add User
+        </p>
+        <div className="space-y-2">
+          <div>
+            <Label
+              htmlFor="new-user-name"
+              className="text-[10px] font-medium tracking-[0.1em] text-muted-foreground/70 uppercase"
+            >
+              Name
+            </Label>
+            <Input
+              id="new-user-name"
+              type="text"
+              placeholder="Jane Smith"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="mt-1.5"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAdd();
+              }}
+            />
+          </div>
+          <div>
+            <Label
+              htmlFor="new-user-email"
+              className="text-[10px] font-medium tracking-[0.1em] text-muted-foreground/70 uppercase"
+            >
+              Email
+            </Label>
+            <div className="mt-1.5 flex gap-2">
+              <Input
+                id="new-user-email"
+                type="email"
+                placeholder="jane@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAdd();
+                }}
+              />
+              <Button onClick={handleAdd} disabled={adding || !email.trim() || !name.trim()}>
+                <PlusIcon className="size-4" />
+                {adding ? "Adding..." : "Add"}
+              </Button>
+            </div>
+          </div>
         </div>
 
         <AnimatePresence>
@@ -371,7 +400,8 @@ function UsersTab() {
             {users.map((user) => (
               <li key={user._id} className="flex items-center justify-between gap-3 px-5 py-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm">{user.email}</p>
+                  {user.name && <p className="truncate text-sm font-medium">{user.name}</p>}
+                  <p className="truncate text-sm text-muted-foreground">{user.email}</p>
                   <p className="text-[11px] text-muted-foreground">
                     {user.passwordSet ? "Active" : "Pending first sign-in"}
                   </p>
