@@ -111,11 +111,98 @@ export async function fillTemplate(
   return pdfDoc;
 }
 
+const LETTER_W = 612;
+const LETTER_H = 792;
+const LETTER_TOLERANCE = 1;
+
+// Adds each page of srcDoc to merged, normalizing to letter size. Standard-size
+// pages are copied verbatim. Non-standard pages are embedded once as a single
+// reusable XObject and scaled to fit the page width; if the scaled content is
+// still taller than one letter page, the SAME embedded XObject is drawn across
+// multiple tile pages at different vertical offsets. Embedding once (rather than
+// re-copying per tile) keeps the heavy image/font resources shared by reference.
+async function addNormalizedSpecSheetPages(
+  merged: PDFDocument,
+  srcDoc: PDFDocument,
+): Promise<void> {
+  const srcPages = srcDoc.getPages();
+
+  for (let i = 0; i < srcPages.length; i++) {
+    const { width: srcW, height: srcH } = srcPages[i].getSize();
+
+    const isPortraitLetter =
+      Math.abs(srcW - LETTER_W) <= LETTER_TOLERANCE &&
+      Math.abs(srcH - LETTER_H) <= LETTER_TOLERANCE;
+    const isLandscapeLetter =
+      Math.abs(srcW - LETTER_H) <= LETTER_TOLERANCE &&
+      Math.abs(srcH - LETTER_W) <= LETTER_TOLERANCE;
+
+    if (isPortraitLetter || isLandscapeLetter) {
+      const [copied] = await merged.copyPages(srcDoc, [i]);
+      merged.addPage(copied);
+      continue;
+    }
+
+    const landscape = srcW > srcH;
+    const targetW = landscape ? LETTER_H : LETTER_W;
+    const targetH = landscape ? LETTER_W : LETTER_H;
+    const scaleToFitWidth = Math.min(targetW / srcW, 1);
+    const scaledH = srcH * scaleToFitWidth;
+    const embedded = await merged.embedPage(srcPages[i]);
+
+    if (scaledH > targetH) {
+      const numTiles = Math.ceil(scaledH / targetH);
+      const xOffset = (targetW - srcW * scaleToFitWidth) / 2;
+      for (let t = 0; t < numTiles; t++) {
+        // yOffset positions the embedded page so tile t's slice aligns with [0, targetH]
+        const yOffset = (t + 1) * targetH - scaledH;
+        const page = merged.addPage([targetW, targetH]);
+        page.drawPage(embedded, {
+          x: xOffset,
+          y: yOffset,
+          xScale: scaleToFitWidth,
+          yScale: scaleToFitWidth,
+        });
+      }
+    } else {
+      const scale = Math.min(targetW / srcW, targetH / srcH, 1);
+      const page = merged.addPage([targetW, targetH]);
+      page.drawPage(embedded, {
+        x: (targetW - srcW * scale) / 2,
+        y: (targetH - srcH * scale) / 2,
+        xScale: scale,
+        yScale: scale,
+      });
+    }
+  }
+}
+
 export async function mergeDocuments(filledDocs: PDFDocument[]): Promise<Uint8Array> {
   const merged = await PDFDocument.create();
   for (const doc of filledDocs) {
     const pages = await merged.copyPages(doc, doc.getPageIndices());
     pages.forEach((page) => merged.addPage(page));
+  }
+  return merged.save();
+}
+
+// Merges an ordered list of documents one at a time. Each entry's bytes are
+// fetched lazily via load() inside the loop so only a single source document is
+// resident at once — the fetched bytes and the loaded PDFDocument both go out of
+// scope each iteration and can be reclaimed before the next document is fetched.
+// Spec sheet entries are normalized to letter size as they are added.
+export async function mergeDocsIncrementally(
+  docs: ReadonlyArray<{ load: () => Promise<ArrayBuffer>; specSheet?: boolean }>,
+): Promise<Uint8Array> {
+  const merged = await PDFDocument.create();
+  for (const { load, specSheet } of docs) {
+    const doc = await PDFDocument.load(await load());
+    if (specSheet) {
+      await addNormalizedSpecSheetPages(merged, doc);
+    } else {
+      const pages = await merged.copyPages(doc, doc.getPageIndices());
+      pages.forEach((page) => merged.addPage(page));
+    }
   }
   return merged.save();
 }

@@ -1,12 +1,11 @@
 import { v } from "convex/values";
-import { PDFDocument } from "pdf-lib";
 
 import { api, internal } from "./_generated/api";
 import { action } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { requireAuth } from "./lib/auth";
 import { buildDrawSchedule, type DrawSchedule } from "./lib/drawSchedule";
-import { fillTemplate, mergeDocuments, mergePdfBytes } from "./lib/pdf";
+import { fillTemplate, mergeDocsIncrementally, mergePdfBytes } from "./lib/pdf";
 import { buildFieldValues, buildSizeGroups, type PacketData } from "./lib/pdfFieldMap";
 import { buildScopeOfWorkPdf, type ScopeSection } from "./lib/scopeOfWorkPdf";
 import {
@@ -111,18 +110,25 @@ export const generatePacket = action({
       { lineItems: args.lineItems },
     );
 
-    const docs: { filename: string; doc: PDFDocument; storageId?: Id<"_storage"> }[] = [];
+    // Each document is filled, serialized, and stored to Convex storage
+    // immediately, then dropped — only its storageId is kept in `entries`. This
+    // keeps the build phase's peak memory at roughly one document at a time
+    // instead of holding every serialized packet doc in the heap at once. The
+    // merge below streams these back from storage one at a time.
+    const entries: { filename: string; storageId: Id<"_storage">; specSheet?: boolean }[] = [];
+
+    const storeBytes = (bytes: Uint8Array) =>
+      ctx.storage.store(new Blob([bytes as BlobPart], { type: "application/pdf" }));
+
     for (const docName of DOC_ORDER) {
       if ((GENERATED_DOCS as readonly string[]).includes(docName)) {
-        docs.push({
-          filename: "Scope of Work.pdf",
-          doc: await buildScopeOfWorkPdf({
-            clientName: args.name,
-            clientAddress,
-            caseNumber: args.caseNumber,
-            sections: scopeSections,
-          }),
+        const scopeDoc = await buildScopeOfWorkPdf({
+          clientName: args.name,
+          clientAddress,
+          caseNumber: args.caseNumber,
+          sections: scopeSections,
         });
+        entries.push({ filename: "Scope of Work.pdf", storageId: await storeBytes(await scopeDoc.save()) });
         continue;
       }
 
@@ -149,7 +155,7 @@ export const generatePacket = action({
 
       const blob = await ctx.storage.get(template.storageId!);
       if (!blob) throw new Error(`Template file missing from storage: ${key}`);
-      const bytes = await blob.arrayBuffer();
+      const templateBytes = await blob.arrayBuffer();
 
       // Lien release: one copy per draw, each with per-draw data and the
       // correct "Is Not Final Draw" / "Is Final Draw" checkbox checked.
@@ -169,13 +175,14 @@ export const generatePacket = action({
             isNotFinalDraw: isFinal ? "" : "Yes",
             isFinalDraw: isFinal ? "Yes" : "",
           };
-          docs.push({
+          const filled = await fillTemplate(
+            templateBytes,
+            buildFieldValues(lienData, fieldMap),
+            buildSizeGroups(fieldMap),
+          );
+          entries.push({
             filename: `Lien Release (Draw ${drawIndex}).pdf`,
-            doc: await fillTemplate(
-              bytes,
-              buildFieldValues(lienData, fieldMap),
-              buildSizeGroups(fieldMap),
-            ),
+            storageId: await storeBytes(await filled.save()),
           });
         }
         continue;
@@ -189,10 +196,12 @@ export const generatePacket = action({
         data = { ...packetData, contractorName: combined, contractorCompanyName: combined };
       }
 
-      docs.push({
-        filename: TEMPLATE_DISPLAY_NAMES[key],
-        doc: await fillTemplate(bytes, buildFieldValues(data, fieldMap), buildSizeGroups(fieldMap)),
-      });
+      const filled = await fillTemplate(
+        templateBytes,
+        buildFieldValues(data, fieldMap),
+        buildSizeGroups(fieldMap),
+      );
+      entries.push({ filename: TEMPLATE_DISPLAY_NAMES[key], storageId: await storeBytes(await filled.save()) });
     }
 
     // Custom contract documents are always included, filled with the same
@@ -201,7 +210,7 @@ export const generatePacket = action({
       internal.customDocuments.listCustomDocumentsInternal,
       { category: "contract" },
     );
-    const customContractDocs: { filename: string; doc: PDFDocument }[] = [];
+    const customContractEntries: (typeof entries)[0][] = [];
     for (const custom of customContracts) {
       let fieldMap: Record<string, string> | undefined = custom.fieldMap;
       if (!fieldMap) {
@@ -211,32 +220,31 @@ export const generatePacket = action({
       }
       const blob = await ctx.storage.get(custom.storageId);
       if (!blob) throw new Error(`Document file missing from storage: ${custom.displayName}`);
-      customContractDocs.push({
+      const filled = await fillTemplate(
+        await blob.arrayBuffer(),
+        buildFieldValues(packetData, fieldMap),
+        buildSizeGroups(fieldMap),
+      );
+      customContractEntries.push({
         filename: `${custom.displayName}.pdf`,
-        doc: await fillTemplate(
-          await blob.arrayBuffer(),
-          buildFieldValues(packetData, fieldMap),
-          buildSizeGroups(fieldMap),
-        ),
+        storageId: await storeBytes(await filled.save()),
       });
     }
-    docs.splice(1, 0, ...customContractDocs);
+    entries.splice(1, 0, ...customContractEntries);
 
     // The invoice slots in just before the payment schedule, which is last in
-    // DOC_ORDER and must always end the packet.
-    const invoiceBlob = await ctx.storage.get(args.invoiceStorageId);
-    if (!invoiceBlob) throw new Error("Invoice file missing from storage.");
-    docs.splice(docs.length - 1, 0, {
+    // DOC_ORDER and must always end the packet. It already lives in storage, so
+    // it reuses its existing storageId rather than storing a copy.
+    entries.splice(entries.length - 1, 0, {
       filename: "Invoice.pdf",
-      doc: await PDFDocument.load(await invoiceBlob.arrayBuffer()),
       storageId: args.invoiceStorageId,
     });
 
-    // Selected waivers then spec sheets merge verbatim after the invoice,
-    // still keeping the payment schedule last. No storageId is set so the
-    // clientFiles loop below stores a per-packet copy — deleting a library
-    // document later must not break regeneration.
-    const selectedDocs: { filename: string; doc: PDFDocument }[] = [];
+    // Selected waivers then spec sheets merge verbatim after the invoice, still
+    // keeping the payment schedule last. Each gets a per-packet storage copy
+    // (made by re-storing the library blob directly, no byte materialization)
+    // so deleting a library document later must not break regeneration.
+    const selectedEntries: (typeof entries)[0][] = [];
     for (const id of [...args.waiverIds, ...args.specSheetIds]) {
       const selected = await ctx.runQuery(internal.customDocuments.getCustomDocumentInternal, {
         id,
@@ -244,17 +252,28 @@ export const generatePacket = action({
       if (!selected) throw new Error(`Selected document no longer exists: ${id}`);
       const blob = await ctx.storage.get(selected.storageId);
       if (!blob) throw new Error(`Document file missing from storage: ${selected.displayName}`);
-      selectedDocs.push({
+      selectedEntries.push({
         filename: `${selected.displayName}.pdf`,
-        doc: await PDFDocument.load(await blob.arrayBuffer()),
+        storageId: await ctx.storage.store(blob),
+        specSheet: args.specSheetIds.includes(id),
       });
     }
-    docs.splice(docs.length - 1, 0, ...selectedDocs);
+    entries.splice(entries.length - 1, 0, ...selectedEntries);
 
-    const mergedBytes = await mergeDocuments(docs.map((d) => d.doc));
-    const packetStorageId = await ctx.storage.store(
-      new Blob([mergedBytes as BlobPart], { type: "application/pdf" }),
+    // Merge by streaming each stored document back one at a time. Only a single
+    // source document is resident at once; spec sheets are normalized to letter
+    // size as they are added.
+    const mergedBytes = await mergeDocsIncrementally(
+      entries.map((e) => ({
+        load: async () => {
+          const blob = await ctx.storage.get(e.storageId);
+          if (!blob) throw new Error(`File missing from storage: ${e.filename}`);
+          return blob.arrayBuffer();
+        },
+        specSheet: e.specSheet,
+      })),
     );
+    const packetStorageId = await storeBytes(mergedBytes);
 
     const clientId: Id<"clients"> = await ctx.runMutation(api.clients.createClient, {
       name: args.name,
@@ -272,21 +291,13 @@ export const generatePacket = action({
       packetStorageId,
     });
 
-    // Store each filled document individually so the file drawer can list and
-    // re-merge them later. The invoice blob already lives in storage, so it
-    // keeps its existing storageId.
-    for (let i = 0; i < docs.length; i++) {
-      let storageId = docs[i].storageId;
-      if (!storageId) {
-        const docBytes = await docs[i].doc.save();
-        storageId = await ctx.storage.store(
-          new Blob([docBytes as BlobPart], { type: "application/pdf" }),
-        );
-      }
+    // Register each stored document with the file drawer so it can list and
+    // re-merge them later. Storage was already done during the build phase.
+    for (let i = 0; i < entries.length; i++) {
       await ctx.runMutation(api.clientFiles.addClientFile, {
         clientId,
-        storageId,
-        filename: docs[i].filename,
+        storageId: entries[i].storageId,
+        filename: entries[i].filename,
         type: "generated",
         order: i,
       });
