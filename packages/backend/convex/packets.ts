@@ -7,6 +7,7 @@ import { requireAuth } from "./lib/auth";
 import { buildDrawSchedule, type DrawSchedule } from "./lib/drawSchedule";
 import { fillTemplate, mergeDocsIncrementally, mergePdfBytes } from "./lib/pdf";
 import { buildFieldValues, buildSizeGroups, type PacketData } from "./lib/pdfFieldMap";
+import { buildConstructionStageCompletionPdf } from "./lib/constructionStageCompletionPdf";
 import { buildScopeOfWorkPdf, type ScopeSection } from "./lib/scopeOfWorkPdf";
 import {
   DOC_ORDER,
@@ -121,7 +122,7 @@ export const generatePacket = action({
       ctx.storage.store(new Blob([bytes as BlobPart], { type: "application/pdf" }));
 
     for (const docName of DOC_ORDER) {
-      if ((GENERATED_DOCS as readonly string[]).includes(docName)) {
+      if (docName === "scope-of-work") {
         const scopeDoc = await buildScopeOfWorkPdf({
           clientName: args.name,
           clientAddress,
@@ -129,6 +130,22 @@ export const generatePacket = action({
           sections: scopeSections,
         });
         entries.push({ filename: "Scope of Work.pdf", storageId: await storeBytes(await scopeDoc.save()) });
+        continue;
+      }
+
+      if (docName === "construction-stage-completion") {
+        const combinedContractor = `${settings.contractorName} / ${settings.contractorCompanyName}`;
+        for (let drawIndex = 1; drawIndex <= drawCount; drawIndex++) {
+          const doc = await buildConstructionStageCompletionPdf({
+            contractorName: combinedContractor,
+            drawNumber: drawIndex,
+            totalDraws: drawCount,
+          });
+          entries.push({
+            filename: `Construction Stage Completion (Draw ${drawIndex}).pdf`,
+            storageId: await storeBytes(await doc.save()),
+          });
+        }
         continue;
       }
 

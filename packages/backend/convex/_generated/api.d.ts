@@ -17,6 +17,7 @@ import type * as http from "../http.js";
 import type * as invoiceBuilder from "../invoiceBuilder.js";
 import type * as invoices from "../invoices.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_constructionStageCompletionPdf from "../lib/constructionStageCompletionPdf.js";
 import type * as lib_drawSchedule from "../lib/drawSchedule.js";
 import type * as lib_invoicePdf from "../lib/invoicePdf.js";
 import type * as lib_pdf from "../lib/pdf.js";
@@ -50,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   invoiceBuilder: typeof invoiceBuilder;
   invoices: typeof invoices;
   "lib/auth": typeof lib_auth;
+  "lib/constructionStageCompletionPdf": typeof lib_constructionStageCompletionPdf;
   "lib/drawSchedule": typeof lib_drawSchedule;
   "lib/invoicePdf": typeof lib_invoicePdf;
   "lib/pdf": typeof lib_pdf;

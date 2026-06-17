@@ -3,21 +3,24 @@ export const DRAW_DEPENDENT_DOCS = [
   "payment-schedule",
 ] as const;
 
-// Built programmatically at packet time (see lib/scopeOfWorkPdf.ts) — no
-// uploaded template required.
-export const GENERATED_DOCS = ["scope-of-work"] as const;
+// Built programmatically at packet time (see lib/scopeOfWorkPdf.ts and
+// lib/constructionStageCompletionPdf.ts) — no uploaded template required.
+// construction-stage-completion emits one document per draw.
+export const GENERATED_DOCS = ["scope-of-work", "construction-stage-completion"] as const;
 
 // Merge order is fixed: contract, custom contract documents (spliced in by
-// packets.ts right after the contract), addendum, scope of work, then the
-// invoice and any selected waivers/spec sheets (also spliced in by packets.ts),
-// lien releases (one per draw, spliced in by packets.ts), with the payment
-// schedule always last.
+// packets.ts right after the contract), addendum, scope of work, the
+// construction stage completion docs (one per draw), then the invoice and any
+// selected waivers/spec sheets (also spliced in by packets.ts), lien releases
+// (one per draw, spliced in by packets.ts), with the payment schedule always
+// last.
 // The builder spec sheet (VA 26-1852) is intentionally NOT part of the packet —
 // the contractor fills it manually.
 export const DOC_ORDER = [
   "construction-contract",
   "va-addendum",
   "scope-of-work",
+  "construction-stage-completion",
   "lien-release",
   "payment-schedule",
 ] as const;
