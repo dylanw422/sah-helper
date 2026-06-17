@@ -65,6 +65,13 @@ export type PacketData = {
   lineItem9Amount: string;
   lineItem10Description: string;
   lineItem10Amount: string;
+
+  // Lien release per-draw fields (populated per copy; blank on all other templates)
+  lienDrawNumber: string;      // "1", "2", … per copy
+  lienDrawAmount: string;      // formatted dollar amount for this specific draw
+  lienDrawDescription: string; // work description for this specific draw
+  isNotFinalDraw: string;      // "Yes" on all but the last lien release copy
+  isFinalDraw: string;         // "Yes" on the last lien release copy only
 };
 
 // Catalog of every PacketData key with a semantic description. This is fed to
@@ -125,6 +132,15 @@ export const KEY_DESCRIPTIONS: Record<keyof PacketData, string> = {
   lineItem9Amount: "Dollar amount of invoice line item 9.",
   lineItem10Description: "Description of invoice line item 10.",
   lineItem10Amount: "Dollar amount of invoice line item 10.",
+  lienDrawNumber:
+    "The draw number (1, 2, 3, …) that this specific lien release covers — not the total draw count.",
+  lienDrawAmount: "The dollar amount for the specific draw this lien release covers.",
+  lienDrawDescription:
+    "The work description for the specific draw this lien release covers (the line item descriptions assigned to this draw, joined with commas).",
+  isNotFinalDraw:
+    "Checkbox: checked (Yes) when this lien release is NOT for the final draw. Maps to fields labeled 'Is Not Final Draw', 'Not Final', or similar.",
+  isFinalDraw:
+    "Checkbox: checked (Yes) when this lien release IS for the final (last) draw. Maps to fields labeled 'Is Final Draw', 'Final Draw', 'Final', or similar.",
 };
 
 export const PACKET_DATA_KEYS = Object.keys(KEY_DESCRIPTIONS) as (keyof PacketData)[];

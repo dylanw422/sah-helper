@@ -98,6 +98,12 @@ export const generatePacket = action({
       contractorNameAddress: `${settings.contractorCompanyName}, ${contractorAddress}`,
       ...buildLineItemFields(args.lineItems),
       ...buildDrawFields(schedule, args.lineItems),
+      // Lien release per-draw fields — blank on all other templates
+      lienDrawNumber: "",
+      lienDrawAmount: "",
+      lienDrawDescription: "",
+      isNotFinalDraw: "",
+      isFinalDraw: "",
     };
 
     const scopeSections: ScopeSection[] = await ctx.runAction(
@@ -129,9 +135,51 @@ export const generatePacket = action({
         fieldMap = await ctx.runAction(internal.templateMapping.mapTemplateFields, { key });
       }
 
+      // Lien release templates uploaded before the checkbox keys existed won't
+      // have isNotFinalDraw / isFinalDraw in their fieldMap. Force a re-map so
+      // the checkboxes are picked up.
+      if (
+        docName === "lien-release" &&
+        fieldMap !== null &&
+        !Object.values(fieldMap).includes("isNotFinalDraw") &&
+        !Object.values(fieldMap).includes("isFinalDraw")
+      ) {
+        fieldMap = await ctx.runAction(internal.templateMapping.mapTemplateFields, { key });
+      }
+
       const blob = await ctx.storage.get(template.storageId!);
       if (!blob) throw new Error(`Template file missing from storage: ${key}`);
       const bytes = await blob.arrayBuffer();
+
+      // Lien release: one copy per draw, each with per-draw data and the
+      // correct "Is Not Final Draw" / "Is Final Draw" checkbox checked.
+      if (docName === "lien-release") {
+        for (let drawIndex = 1; drawIndex <= drawCount; drawIndex++) {
+          const isFinal = drawIndex === drawCount;
+          const group = schedule.groups[drawIndex - 1];
+          const lienData: PacketData = {
+            ...packetData,
+            lienDrawNumber: String(drawIndex),
+            lienDrawAmount: formatCurrency(schedule.drawAmounts[drawIndex - 1]),
+            lienDrawDescription: isFinal
+              ? "Release 20% holdback"
+              : group
+                ? group.map((idx) => args.lineItems[idx].description).join(", ")
+                : "",
+            isNotFinalDraw: isFinal ? "" : "Yes",
+            isFinalDraw: isFinal ? "Yes" : "",
+          };
+          docs.push({
+            filename: `Lien Release (Draw ${drawIndex}).pdf`,
+            doc: await fillTemplate(
+              bytes,
+              buildFieldValues(lienData, fieldMap),
+              buildSizeGroups(fieldMap),
+            ),
+          });
+        }
+        continue;
+      }
 
       // The addendum's contractor line must show both the personal and company
       // name, e.g. "William Gray / Access Innovations".

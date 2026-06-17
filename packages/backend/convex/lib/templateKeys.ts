@@ -10,13 +10,15 @@ export const GENERATED_DOCS = ["scope-of-work"] as const;
 // Merge order is fixed: contract, custom contract documents (spliced in by
 // packets.ts right after the contract), addendum, scope of work, then the
 // invoice and any selected waivers/spec sheets (also spliced in by packets.ts),
-// with the payment schedule always last.
+// lien releases (one per draw, spliced in by packets.ts), with the payment
+// schedule always last.
 // The builder spec sheet (VA 26-1852) is intentionally NOT part of the packet —
 // the contractor fills it manually.
 export const DOC_ORDER = [
   "construction-contract",
   "va-addendum",
   "scope-of-work",
+  "lien-release",
   "payment-schedule",
 ] as const;
 
@@ -33,6 +35,7 @@ export const TEMPLATE_KEYS = [
   "payment-schedule-5draw",
   "payment-schedule-6draw",
   "va-addendum",
+  "lien-release",
 ] as const;
 
 export type TemplateKey = (typeof TEMPLATE_KEYS)[number];

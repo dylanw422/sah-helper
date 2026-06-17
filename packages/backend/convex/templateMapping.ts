@@ -30,6 +30,12 @@ Rules:
 - Field names may contain misspellings (e.g. "Verteran", "Inpsection") — map by meaning.
 - Numbered draw/inspection/payment amount fields map to drawNAmount by their number;
   only fields explicitly named "final" map to finalDrawAmount.
+- For lien release templates: a single draw number field maps to lienDrawNumber; a single
+  draw amount field maps to lienDrawAmount; a single draw description/work field maps to
+  lienDrawDescription.
+- Checkbox fields (type "PDFCheckBox") labeled "Is Not Final Draw", "Not Final", or similar
+  map to isNotFinalDraw. Checkbox fields labeled "Is Final Draw", "Final Draw", "Final", or
+  similar map to isFinalDraw.
 - OMIT fields that must stay blank for pen-and-ink completion at signing:
   * any date field (names containing "date", "day", "month", "year")
   * signature lines and printed-name lines next to signatures (e.g. bare "Veteran" or

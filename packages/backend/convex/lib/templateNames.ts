@@ -8,4 +8,5 @@ export const TEMPLATE_DISPLAY_NAMES: Record<TemplateKey, string> = {
   "payment-schedule-5draw": "Payment Schedule (5-draw).pdf",
   "payment-schedule-6draw": "Payment Schedule (6-draw).pdf",
   "va-addendum": "VA Addendum.pdf",
+  "lien-release": "Lien Release.pdf",
 };

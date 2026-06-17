@@ -10,8 +10,8 @@ const MIN_FONT_SIZE = 6;
 const FIELD_PADDING = 4;
 const LINE_HEIGHT_FACTOR = 1.2;
 
-function fitFontSize(font: PDFFont, text: string, width: number, height: number): number {
-  let size = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, height - FIELD_PADDING));
+function fitFontSize(font: PDFFont, text: string, width: number, _height: number): number {
+  let size = MAX_FONT_SIZE;
   const longestLineWidth = (s: number) =>
     Math.max(...text.split("\n").map((line) => font.widthOfTextAtSize(line, s)));
   while (size > MIN_FONT_SIZE && longestLineWidth(size) > width - FIELD_PADDING) {
@@ -73,7 +73,17 @@ export async function fillTemplate(
         : fitFontSize(font, value, width, height);
       fitted.set(fieldName, { field, size });
     } catch {
-      // Field not present in this template — skip silently
+      // Not a text field — try checkbox
+      try {
+        const checkbox = form.getCheckBox(fieldName);
+        if (value === "Yes") {
+          checkbox.check();
+        } else {
+          checkbox.uncheck();
+        }
+      } catch {
+        // Field not present in this template — skip silently
+      }
     }
   }
 
