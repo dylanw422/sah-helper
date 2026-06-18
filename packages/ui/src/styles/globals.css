@@ -182,6 +182,7 @@
   }
   html {
     @apply font-sans;
+    font-size: 106.25%;
     scroll-behavior: smooth;
     scrollbar-gutter: stable;
   }
