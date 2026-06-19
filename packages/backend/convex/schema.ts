@@ -103,4 +103,42 @@ export default defineSchema({
     // flight; {} if the PDF has no AcroForm fields.
     fieldMap: v.optional(v.record(v.string(), v.string())),
   }).index("by_category", ["category"]),
+
+  // Pricing catalog — one row per distinct piece of work/material, learned
+  // automatically from saved invoices and packet clients.
+  catalogItems: defineTable({
+    canonicalDescription: v.string(),
+    // Lowercased, trimmed, whitespace-collapsed, punctuation-stripped description.
+    matchKey: v.string(),
+    area: v.optional(v.string()),
+    unit: v.optional(v.string()),
+    lastUnitPrice: v.number(),
+    avgUnitPrice: v.number(),
+    minUnitPrice: v.number(),
+    maxUnitPrice: v.number(),
+    occurrences: v.number(),
+    lastUsedAt: v.number(),
+    // When true, manualUnitPrice is used as the representative price for AI
+    // generation instead of lastUnitPrice. Not overwritten by stat recompute.
+    priceLocked: v.optional(v.boolean()),
+    manualUnitPrice: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_matchKey", ["matchKey"])
+    .index("by_lastUsedAt", ["lastUsedAt"]),
+
+  // One observation per source line item — keyed by source so re-saving an
+  // invoice never double-counts.
+  priceObservations: defineTable({
+    catalogItemId: v.id("catalogItems"),
+    sourceType: v.union(v.literal("invoice"), v.literal("client")),
+    sourceId: v.string(),
+    description: v.string(),
+    qty: v.number(),
+    unitPrice: v.number(),
+    observedAt: v.number(),
+  })
+    .index("by_sourceType_sourceId", ["sourceType", "sourceId"])
+    .index("by_catalogItemId", ["catalogItemId"]),
 });

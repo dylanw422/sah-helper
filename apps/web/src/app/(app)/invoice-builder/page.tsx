@@ -7,14 +7,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@sah-helper/ui/compone
 import { Input } from "@sah-helper/ui/components/input";
 import { Label } from "@sah-helper/ui/components/label";
 import { Skeleton } from "@sah-helper/ui/components/skeleton";
+import { Textarea } from "@sah-helper/ui/components/textarea";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
   ArrowRightIcon,
+  BookOpenIcon,
   BuildingIcon,
+  ChevronDownIcon,
   DownloadIcon,
   FilesIcon,
+  MicIcon,
+  MicOffIcon,
   SettingsIcon,
+  SparklesIcon,
+  XIcon,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -33,6 +41,7 @@ import {
 import type { VerifiedData } from "@/components/wizard/verify-step";
 import { downloadFile } from "@/lib/download";
 import { formatCurrency, formatDisplayDate, maskPhone } from "@/lib/format";
+import { grantBand, MAX_GRANT_AMOUNT } from "@/lib/grant";
 import { writeInvoiceDraft } from "@/lib/invoice-draft";
 
 type BuiltInvoice = { storageId: Id<"_storage">; url: string };
@@ -103,6 +112,7 @@ function InvoiceBuilder() {
   const saved = useQuery(api.invoiceBuilder.getInvoice, invoiceId ? { id: invoiceId } : "skip");
   const buildInvoice = useAction(api.invoiceBuilder.buildInvoice);
   const saveInvoice = useMutation(api.invoiceBuilder.saveInvoice);
+  const generateLineItems = useAction(api.invoiceGenerator.generateLineItems);
 
   const [fields, setFields] = useState({
     name: "",
@@ -126,6 +136,14 @@ function InvoiceBuilder() {
   const [savedHydrated, setSavedHydrated] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pendingNav, setPendingNav] = useState<PendingNav | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiDescription, setAiDescription] = useState("");
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiNotes, setAiNotes] = useState<string[]>([]);
+  const [pendingAiRows, setPendingAiRows] = useState<LineItemRow[] | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const voiceBaseTextRef = useRef("");
   // Incremented on every edit; a save only clears `dirty` if no edits landed
   // while the save request was in flight.
   const editVersion = useRef(0);
@@ -327,6 +345,108 @@ function InvoiceBuilder() {
     void startPacket();
   };
 
+  // Stop recognition when the drawer closes so it doesn't run in the background.
+  useEffect(() => {
+    if (!aiOpen && recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+  }, [aiOpen]);
+
+  // Ensure recognition is stopped if the component unmounts.
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.stop();
+    };
+  }, []);
+
+  const toggleVoice = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const w = window as unknown as Record<string, unknown>;
+    const SpeechRecognitionAPI = (w["SpeechRecognition"] ?? w["webkitSpeechRecognition"]) as
+      | (new () => {
+          continuous: boolean;
+          interimResults: boolean;
+          lang: string;
+          onresult: ((e: { results: { [i: number]: { [i: number]: { transcript: string } } } }) => void) | null;
+          onend: (() => void) | null;
+          onerror: ((e: { error: string }) => void) | null;
+          start: () => void;
+          stop: () => void;
+        })
+      | undefined;
+    if (!SpeechRecognitionAPI) {
+      toast.error("Voice input is not supported in this browser.");
+      return;
+    }
+    voiceBaseTextRef.current = aiDescription.trimEnd();
+    const recognition = new SpeechRecognitionAPI();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let i = 0; i < Object.keys(event.results).length; i++) {
+        transcript += event.results[i]![0]!.transcript;
+      }
+      const base = voiceBaseTextRef.current;
+      setAiDescription(base ? `${base} ${transcript}` : transcript);
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+    };
+    recognition.onerror = (event) => {
+      if (event.error !== "no-speech") {
+        toast.error("Voice input stopped. Please try again.");
+      }
+      setIsListening(false);
+      recognitionRef.current = null;
+    };
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
+  };
+
+  const handleGenerate = async () => {
+    if (aiGenerating || !aiDescription.trim()) return;
+    setAiGenerating(true);
+    try {
+      const result = await generateLineItems({ description: aiDescription });
+      setAiNotes(result.notes);
+      if (result.items.length === 0) return;
+      const newRows: LineItemRow[] = result.items.map((item) => ({
+        id: crypto.randomUUID(),
+        description: item.description,
+        qty: String(item.qty),
+        unitPrice: String(item.unitPrice),
+        isEstimate: item.isEstimate,
+      }));
+      const hasRows = regularRows.some(
+        (row) => row.description.trim() !== "" || lineItemRowAmount(row) > 0,
+      );
+      if (hasRows) {
+        setPendingAiRows(newRows);
+      } else {
+        setRows([...newRows, profitRow]);
+        markChanged();
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not generate line items.");
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  const confirmReplaceRows = () => {
+    if (!pendingAiRows) return;
+    setRows([...pendingAiRows, profitRow]);
+    markChanged();
+    setPendingAiRows(null);
+  };
+
   const confirmLeave = () => {
     const nav = pendingNav;
     setPendingNav(null);
@@ -382,10 +502,16 @@ function InvoiceBuilder() {
               : "Compose a new invoice. Drag line items to set construction order."}
           </p>
         </div>
-        <Link href="/invoices" className={buttonVariants({ variant: "outline", size: "lg" })}>
-          <FilesIcon data-icon="inline-start" />
-          Saved Invoices
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/catalog" className={buttonVariants({ variant: "outline", size: "lg" })}>
+            <BookOpenIcon data-icon="inline-start" />
+            Catalog
+          </Link>
+          <Link href="/invoices" className={buttonVariants({ variant: "outline", size: "lg" })}>
+            <FilesIcon data-icon="inline-start" />
+            Saved Invoices
+          </Link>
+        </div>
       </div>
 
       <div
@@ -395,6 +521,74 @@ function InvoiceBuilder() {
         }}
       >
         <div className="min-w-0 space-y-6">
+          <Card>
+            <button
+              type="button"
+              onClick={() => setAiOpen((o) => !o)}
+              className="flex w-full items-center justify-between px-6 py-4 text-left"
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold">
+                <SparklesIcon className="size-4 text-indigo-500" />
+                Generate with AI
+              </span>
+              <ChevronDownIcon
+                className={`size-4 text-muted-foreground transition-transform duration-200 ${aiOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            <AnimatePresence initial={false}>
+              {aiOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                  className="overflow-hidden"
+                >
+                  <div className="space-y-3 border-t border-border px-6 pb-5 pt-4">
+                    <p className="text-xs text-muted-foreground">
+                      Describe the work to be done and we&rsquo;ll draft ADA-compliant line items
+                      from your pricing catalog.
+                    </p>
+                    <Textarea
+                      placeholder="Describe what work needs to be done…"
+                      value={aiDescription}
+                      onChange={(e) => setAiDescription(e.target.value)}
+                      className="min-h-24 resize-y"
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={toggleVoice}
+                        aria-label={isListening ? "Stop voice input" : "Start voice input"}
+                        className={isListening ? "border-red-400 text-red-500 hover:border-red-400 hover:text-red-500" : ""}
+                      >
+                        {isListening ? (
+                          <MicOffIcon className="size-4" />
+                        ) : (
+                          <MicIcon className="size-4" />
+                        )}
+                      </Button>
+                      {isListening && (
+                        <span className="text-xs text-red-500">Listening…</span>
+                      )}
+                      <Button
+                        variant="outline"
+                        disabled={!aiDescription.trim() || aiGenerating}
+                        onClick={() => void handleGenerate()}
+                        className="ml-auto"
+                      >
+                        <SparklesIcon data-icon="inline-start" />
+                        {aiGenerating ? "Generating…" : "Generate Line Items"}
+                      </Button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -489,6 +683,24 @@ function InvoiceBuilder() {
             </CardContent>
           </Card>
 
+          {aiNotes.length > 0 && (
+            <div className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-400">
+              <div className="flex-1 space-y-0.5">
+                {aiNotes.map((note, i) => (
+                  <p key={i}>{note}</p>
+                ))}
+              </div>
+              <button
+                type="button"
+                aria-label="Dismiss notes"
+                onClick={() => setAiNotes([])}
+                className="mt-0.5 shrink-0 opacity-60 hover:opacity-100"
+              >
+                <XIcon className="size-3.5" />
+              </button>
+            </div>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>Line Items</CardTitle>
@@ -505,6 +717,26 @@ function InvoiceBuilder() {
               <CardTitle>Invoice Summary</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {(() => {
+                const band = grantBand(total);
+                if (band === "near") {
+                  return (
+                    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                      Approaching the {formatCurrency(MAX_GRANT_AMOUNT)} SAH grant maximum.
+                    </div>
+                  );
+                }
+                if (band === "over") {
+                  return (
+                    <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400">
+                      Meets or exceeds the {formatCurrency(MAX_GRANT_AMOUNT)} SAH grant maximum by{" "}
+                      {formatCurrency(total - MAX_GRANT_AMOUNT)}. The VA grant will not cover the
+                      overage.
+                    </div>
+                  );
+                }
+                return null;
+              })()}
               <dl className="space-y-2 text-xs">
                 <div className="flex justify-between gap-2">
                   <dt className="text-muted-foreground">Invoice #</dt>
@@ -526,6 +758,18 @@ function InvoiceBuilder() {
                   <dt>Total</dt>
                   <dd className="font-mono tabular-nums">{formatCurrency(total)}</dd>
                 </div>
+                <div className="flex justify-between gap-2 text-muted-foreground">
+                  <dt>Grant max</dt>
+                  <dd className="font-mono tabular-nums">{formatCurrency(MAX_GRANT_AMOUNT)}</dd>
+                </div>
+                {total >= MAX_GRANT_AMOUNT && (
+                  <div className="flex justify-between gap-2 text-red-600 dark:text-red-400">
+                    <dt>Over by</dt>
+                    <dd className="font-mono tabular-nums">
+                      {formatCurrency(total - MAX_GRANT_AMOUNT)}
+                    </dd>
+                  </div>
+                )}
               </dl>
 
               <div className="flex flex-col gap-2">
@@ -554,6 +798,15 @@ function InvoiceBuilder() {
         confirmLabel="Leave"
         onConfirm={confirmLeave}
         onCancel={() => setPendingNav(null)}
+      />
+
+      <ConfirmDialog
+        open={pendingAiRows !== null}
+        title="Replace current line items?"
+        description="This will replace your existing line items with the AI-generated ones. This cannot be undone."
+        confirmLabel="Replace"
+        onConfirm={confirmReplaceRows}
+        onCancel={() => setPendingAiRows(null)}
       />
     </div>
   );
