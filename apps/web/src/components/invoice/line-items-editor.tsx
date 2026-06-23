@@ -19,6 +19,7 @@ export type LineItemRow = {
   description: string;
   qty: string;
   unitPrice: string;
+  isEstimate?: boolean;
 };
 
 export const PROFIT_DESCRIPTION = "Profit";
@@ -59,7 +60,8 @@ export function LineItemsEditor({
   const [focusId, setFocusId] = useState<string | null>(null);
 
   const setRow = (id: string, patch: Partial<LineItemRow>) =>
-    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+    // Editing any field clears the estimate flag for that row.
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch, isEstimate: undefined } : row)));
 
   const moveRow = (id: string, dir: -1 | 1) => {
     const i = regularRows.findIndex((row) => row.id === id);
@@ -178,7 +180,7 @@ function LineItemRowView({
   count: number;
   focusDescription: boolean;
   onFocused: () => void;
-  onPatch: (patch: Partial<LineItemRow>) => void;
+  onPatch: (patch: Partial<Omit<LineItemRow, "isEstimate">>) => void;
   onMove: (dir: -1 | 1) => void;
   onDelete: () => void;
   onAddRow: () => void;
@@ -217,15 +219,23 @@ function LineItemRowView({
       >
         <GripVerticalIcon className="size-4" />
       </button>
-      <Input
-        ref={descriptionRef}
-        value={row.description}
-        onChange={(e) => {
-          const v = e.target.value;
-          onPatch({ description: v.length > 0 ? v[0]!.toUpperCase() + v.slice(1) : v });
-        }}
-        placeholder="Description"
-      />
+      <div className="relative flex items-center">
+        <Input
+          ref={descriptionRef}
+          value={row.description}
+          onChange={(e) => {
+            const v = e.target.value;
+            onPatch({ description: v.length > 0 ? v[0]!.toUpperCase() + v.slice(1) : v });
+          }}
+          placeholder="Description"
+          className={row.isEstimate ? "pr-12" : undefined}
+        />
+        {row.isEstimate && (
+          <span className="pointer-events-none absolute right-1.5 rounded-sm bg-amber-500/15 px-1 py-0.5 text-[9px] font-medium text-amber-600 dark:text-amber-400">
+            est.
+          </span>
+        )}
+      </div>
       <Input
         type="number"
         inputMode="decimal"

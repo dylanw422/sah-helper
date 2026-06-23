@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
+import { syncSource } from "./catalog";
 import { requireAuth } from "./lib/auth";
 import { lineItemValidator } from "./schema";
 
@@ -105,11 +106,18 @@ export const createClient = mutation({
   handler: async (ctx, args) => {
     await requireAuth(ctx);
     const now = Date.now();
-    return await ctx.db.insert("clients", {
+    const clientId = await ctx.db.insert("clients", {
       ...args,
       status: "unsigned",
       createdAt: now,
       updatedAt: now,
     });
+    await syncSource(ctx, {
+      sourceType: "client",
+      sourceId: clientId,
+      observedAt: now,
+      lineItems: args.lineItems,
+    });
+    return clientId;
   },
 });

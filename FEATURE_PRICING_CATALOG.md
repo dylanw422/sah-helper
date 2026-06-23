@@ -239,12 +239,13 @@ Flow:
 3. **Rules baked into the prompt:**
    - Break the described work into concrete line items in **construction order** (demo →
      rough‑in → finish), since downstream draws split in line‑item order.
-   - **Reuse** a catalog item (return its `catalogItemId`) whenever the work matches one —
-     even if the wording differs — and use its representative price as the unit price
-     unless the description clearly implies a different quantity/scope.
-   - **Create** a new item (`catalogItemId: null`, `isEstimate: true`) only when nothing in
-     the catalog fits; estimate a realistic unit price using national residential
-     construction norms and infer a `unit`.
+   - Write descriptions specific to THIS job — do NOT copy catalog descriptions verbatim.
+     Line items will rarely be identical across jobs; the catalog is a **pricing reference**,
+     not a copy-paste library.
+   - **Reference** a catalog item (return its `catalogItemId`) when similar work appears in
+     the catalog; use that price as the basis for the unit price. `isEstimate: false`.
+   - **Create** a new item (`catalogItemId: null`, `isEstimate: true`) when no catalog item
+     is relevant; estimate a realistic unit price using national residential construction norms.
    - Do **not** add a profit line — the builder owns the profit percentage.
    - **Budget:** the VA SAH grant maximum is **$126,526**. Keep the total at or under the
      cap. If the described scope cannot reasonably fit, still return the best itemization

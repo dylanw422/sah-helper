@@ -97,13 +97,13 @@ export default function DashboardPage() {
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold tracking-[-0.025em]">Clients</h1>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Link href="/invoices">
+          <Link href="/invoice-builder">
             <Button
               size="lg"
               className="w-full bg-emerald-600 text-white hover:bg-emerald-700 hover:shadow-[0_0_0_1px_rgb(16_185_129/0.5),0_4px_16px_-4px_rgb(16_185_129/0.6)] sm:w-auto"
             >
               <ReceiptIcon data-icon="inline-start" />
-              Invoices
+              New Invoice
             </Button>
           </Link>
           <Link href="/new-packet">

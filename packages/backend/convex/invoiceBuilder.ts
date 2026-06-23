@@ -4,6 +4,7 @@ import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action, mutation, query } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
+import { syncSource } from "./catalog";
 import { buildInvoicePdf } from "./lib/invoicePdf";
 import { lineItemValidator } from "./schema";
 
@@ -74,11 +75,21 @@ export const saveInvoice = mutation({
     await requireAuth(ctx);
     const total = data.lineItems.reduce((sum, item) => sum + item.amount, 0);
     const now = Date.now();
+    let savedId: Id<"invoices">;
     if (id) {
       await ctx.db.patch(id, { ...data, total, updatedAt: now });
-      return id;
+      savedId = id;
+    } else {
+      savedId = await ctx.db.insert("invoices", { ...data, total, createdAt: now, updatedAt: now });
     }
-    return await ctx.db.insert("invoices", { ...data, total, createdAt: now, updatedAt: now });
+    const observedAt = Date.parse(`${data.invoiceDate}T00:00:00`) || now;
+    await syncSource(ctx, {
+      sourceType: "invoice",
+      sourceId: savedId,
+      observedAt,
+      lineItems: data.lineItems,
+    });
+    return savedId;
   },
 });
 
@@ -102,6 +113,13 @@ export const deleteInvoice = mutation({
   args: { id: v.id("invoices") },
   handler: async (ctx, { id }) => {
     await requireAuth(ctx);
+    // Retract observations before deleting so catalog stats recompute correctly.
+    await syncSource(ctx, {
+      sourceType: "invoice",
+      sourceId: id,
+      observedAt: Date.now(),
+      lineItems: [],
+    });
     await ctx.db.delete(id);
   },
 });
