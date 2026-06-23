@@ -121,6 +121,11 @@ const LETTER_TOLERANCE = 1;
 // still taller than one letter page, the SAME embedded XObject is drawn across
 // multiple tile pages at different vertical offsets. Embedding once (rather than
 // re-copying per tile) keeps the heavy image/font resources shared by reference.
+//
+// getCropBox() is used instead of getSize() because PDF viewers display the
+// CropBox, not the MediaBox. Spec sheets from manufacturers often have a
+// letter-size CropBox but a much taller MediaBox containing hidden/off-screen
+// content — using getSize() (MediaBox) would tile those pages unnecessarily.
 async function addNormalizedSpecSheetPages(
   merged: PDFDocument,
   srcDoc: PDFDocument,
@@ -128,7 +133,8 @@ async function addNormalizedSpecSheetPages(
   const srcPages = srcDoc.getPages();
 
   for (let i = 0; i < srcPages.length; i++) {
-    const { width: srcW, height: srcH } = srcPages[i].getSize();
+    // getCropBox() falls back to MediaBox when no CropBox is defined.
+    const { x: cropX, y: cropY, width: srcW, height: srcH } = srcPages[i].getCropBox();
 
     const isPortraitLetter =
       Math.abs(srcW - LETTER_W) <= LETTER_TOLERANCE &&
@@ -148,7 +154,9 @@ async function addNormalizedSpecSheetPages(
     const targetH = landscape ? LETTER_W : LETTER_H;
     const scaleToFitWidth = Math.min(targetW / srcW, 1);
     const scaledH = srcH * scaleToFitWidth;
-    const embedded = await merged.embedPage(srcPages[i]);
+    // Pass CropBox bounds so only the viewer-visible area is embedded.
+    const boundingBox = { left: cropX, bottom: cropY, right: cropX + srcW, top: cropY + srcH };
+    const embedded = await merged.embedPage(srcPages[i], boundingBox);
 
     if (scaledH > targetH) {
       const numTiles = Math.ceil(scaledH / targetH);
