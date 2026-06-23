@@ -2,9 +2,10 @@
 // The grant pays the full contract total (line items + profit), so the cap is
 // checked against the invoice *total*, profit included.
 export const MAX_GRANT_AMOUNT = 126_526;
+export const MIN_TARGET_AMOUNT = 115_000;
 
-export function grantBand(total: number): "ok" | "near" | "over" {
+export function grantBand(total: number): "under" | "ok" | "over" {
   if (total >= MAX_GRANT_AMOUNT) return "over";
-  if (total >= MAX_GRANT_AMOUNT * 0.9) return "near";
-  return "ok";
+  if (total >= MIN_TARGET_AMOUNT) return "ok";
+  return "under";
 }

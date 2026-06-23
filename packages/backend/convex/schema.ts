@@ -132,7 +132,7 @@ export default defineSchema({
   // invoice never double-counts.
   priceObservations: defineTable({
     catalogItemId: v.id("catalogItems"),
-    sourceType: v.union(v.literal("invoice"), v.literal("client")),
+    sourceType: v.union(v.literal("invoice"), v.literal("client"), v.literal("import")),
     sourceId: v.string(),
     description: v.string(),
     qty: v.number(),
@@ -141,4 +141,15 @@ export default defineSchema({
   })
     .index("by_sourceType_sourceId", ["sourceType", "sourceId"])
     .index("by_catalogItemId", ["catalogItemId"]),
+
+  // One row per confirmed PDF import. Used to track import history and enable undo.
+  catalogImports: defineTable({
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    itemCount: v.number(),
+    total: v.number(),
+    importedAt: v.number(),
+  })
+    .index("by_importedAt", ["importedAt"])
+    .index("by_storageId", ["storageId"]),
 });

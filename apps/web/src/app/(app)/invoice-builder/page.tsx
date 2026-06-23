@@ -41,7 +41,7 @@ import {
 import type { VerifiedData } from "@/components/wizard/verify-step";
 import { downloadFile } from "@/lib/download";
 import { formatCurrency, formatDisplayDate, maskPhone } from "@/lib/format";
-import { grantBand, MAX_GRANT_AMOUNT } from "@/lib/grant";
+import { grantBand, MAX_GRANT_AMOUNT, MIN_TARGET_AMOUNT } from "@/lib/grant";
 import { writeInvoiceDraft } from "@/lib/invoice-draft";
 
 type BuiltInvoice = { storageId: Id<"_storage">; url: string };
@@ -148,6 +148,7 @@ function InvoiceBuilder() {
   // while the save request was in flight.
   const editVersion = useRef(0);
   const [autoSaveQueued, setAutoSaveQueued] = useState(false);
+  const lineItemsCardRef = useRef<HTMLDivElement>(null);
 
   // While the form has unsaved changes, intercept clicks on internal links
   // (including the app header) and confirm before navigating away.
@@ -432,6 +433,7 @@ function InvoiceBuilder() {
       } else {
         setRows([...newRows, profitRow]);
         markChanged();
+        scrollToLineItems();
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not generate line items.");
@@ -440,11 +442,18 @@ function InvoiceBuilder() {
     }
   };
 
+  const scrollToLineItems = () => {
+    setTimeout(() => {
+      lineItemsCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  };
+
   const confirmReplaceRows = () => {
     if (!pendingAiRows) return;
     setRows([...pendingAiRows, profitRow]);
     markChanged();
     setPendingAiRows(null);
+    scrollToLineItems();
   };
 
   const confirmLeave = () => {
@@ -701,7 +710,7 @@ function InvoiceBuilder() {
             </div>
           )}
 
-          <Card>
+          <Card ref={lineItemsCardRef}>
             <CardHeader>
               <CardTitle>Line Items</CardTitle>
             </CardHeader>
@@ -719,19 +728,19 @@ function InvoiceBuilder() {
             <CardContent className="space-y-4">
               {(() => {
                 const band = grantBand(total);
-                if (band === "near") {
+                if (band === "under") {
                   return (
                     <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                      Approaching the {formatCurrency(MAX_GRANT_AMOUNT)} SAH grant maximum.
+                      Invoice is under {formatCurrency(MIN_TARGET_AMOUNT)}. Target between{" "}
+                      {formatCurrency(MIN_TARGET_AMOUNT)} and {formatCurrency(MAX_GRANT_AMOUNT)}.
                     </div>
                   );
                 }
                 if (band === "over") {
                   return (
                     <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400">
-                      Meets or exceeds the {formatCurrency(MAX_GRANT_AMOUNT)} SAH grant maximum by{" "}
-                      {formatCurrency(total - MAX_GRANT_AMOUNT)}. The VA grant will not cover the
-                      overage.
+                      Exceeds the {formatCurrency(MAX_GRANT_AMOUNT)} SAH grant maximum by{" "}
+                      {formatCurrency(total - MAX_GRANT_AMOUNT)}.
                     </div>
                   );
                 }
@@ -759,14 +768,24 @@ function InvoiceBuilder() {
                   <dd className="font-mono tabular-nums">{formatCurrency(total)}</dd>
                 </div>
                 <div className="flex justify-between gap-2 text-muted-foreground">
-                  <dt>Grant max</dt>
-                  <dd className="font-mono tabular-nums">{formatCurrency(MAX_GRANT_AMOUNT)}</dd>
+                  <dt>Target range</dt>
+                  <dd className="font-mono tabular-nums">
+                    {formatCurrency(MIN_TARGET_AMOUNT)}–{formatCurrency(MAX_GRANT_AMOUNT)}
+                  </dd>
                 </div>
                 {total >= MAX_GRANT_AMOUNT && (
                   <div className="flex justify-between gap-2 text-red-600 dark:text-red-400">
                     <dt>Over by</dt>
                     <dd className="font-mono tabular-nums">
                       {formatCurrency(total - MAX_GRANT_AMOUNT)}
+                    </dd>
+                  </div>
+                )}
+                {total < MIN_TARGET_AMOUNT && total > 0 && (
+                  <div className="flex justify-between gap-2 text-amber-600 dark:text-amber-400">
+                    <dt>Under by</dt>
+                    <dd className="font-mono tabular-nums">
+                      {formatCurrency(MIN_TARGET_AMOUNT - total)}
                     </dd>
                   </div>
                 )}

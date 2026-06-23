@@ -54,13 +54,13 @@ PRICING REFERENCE (historical prices from prior invoices — use these as your b
 ${catalogLines}
 
 RULES:
-1. Write a clear, specific description for each line item tailored to THIS job. Do NOT copy catalog descriptions verbatim — write what actually needs to be done.
+1. Write short, action-oriented descriptions — a verb phrase saying what is being done, nothing more. No methodology, no standards references, no explanations. Examples of the right style: "Remove damaged subfloor", "Repair floor joists", "Widen and install new doors", "New 3x5 curbless shower", "Install grab bars", "Drywall and paint bathroom". A little specificity is fine (dimensions, material) but keep it to one short phrase per item.
 2. Use the catalog as a pricing reference: if similar work appears in the catalog, use that price range to inform your unit price. Set "catalogItemId" to the matching [ID:...] and "isEstimate" to false.
 3. For work with no close catalog match, estimate a realistic unit price based on national residential construction rates. Set "catalogItemId" to null and "isEstimate" to true.
 4. List items in construction order (demo → rough-in → finish), since downstream draws are split in this order.
 5. Do NOT add a profit or overhead line — the builder handles the profit percentage separately.
-6. The VA SAH grant maximum is $${MAX_GRANT_AMOUNT.toLocaleString()}. Keep the total at or under this cap when possible. If the scope genuinely exceeds the cap, still return the full itemization and add a note explaining the overage.
-7. Add "notes" explaining your pricing rationale: which items were informed by catalog history, which are fresh estimates, and any budget concerns.
+6. The target invoice total is between $115,000 and $${MAX_GRANT_AMOUNT.toLocaleString()} (the VA SAH grant maximum). Aim for this range. If the described scope would fall short, look for additional reasonable work items implied by the description. If it genuinely exceeds the cap, still return the full itemization and add a note.
+7. Add 1–3 short "notes" (one sentence each, no catalog IDs). Only flag things the contractor actually needs to know: how many items were estimated vs. catalog-priced, any significant assumptions, and whether the total is near or over the grant cap. Skip notes if there is nothing meaningful to say.
 
 Return ONLY this JSON:
 {"items":[{"description":"string","qty":number,"unitPrice":number,"catalogItemId":"string or null","isEstimate":boolean}],"notes":["string"]}`;
@@ -145,11 +145,21 @@ export const generateLineItems = action({
       };
     }
 
+    const planAndSpec: GeneratedItem = {
+      description: "Plan and spec job",
+      qty: 1,
+      unitPrice: 2500,
+      catalogItemId: null,
+      isEstimate: false,
+    };
+
+    const items = [planAndSpec, ...parsed.items];
+
     // Recompute total server-side — never trust model arithmetic.
-    const total = parsed.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
+    const total = items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
 
     return {
-      items: parsed.items,
+      items,
       total,
       exceedsGrant: total >= MAX_GRANT_AMOUNT,
       notes: parsed.notes,

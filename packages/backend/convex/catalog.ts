@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { api } from "./_generated/api";
+import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
@@ -14,12 +15,20 @@ function toMatchKey(description: string): string {
     .trim();
 }
 
+export type ImportPreview = {
+  storageId: string;
+  fileName: string;
+  lineItems: { description: string; qty: number; unitPrice: number; amount: number }[];
+  total: number;
+  totalMismatchWarning: boolean;
+};
+
 // Idempotent: deletes prior observations for this source, then re-inserts from
 // current line items and recomputes stats for every affected catalogItem.
 export async function syncSource(
   ctx: MutationCtx,
   args: {
-    sourceType: "invoice" | "client";
+    sourceType: "invoice" | "client" | "import";
     sourceId: string;
     observedAt: number;
     lineItems: { description: string; qty: number; unitPrice: number }[];
@@ -237,5 +246,65 @@ export const triggerBackfill = mutation({
   handler: async (ctx) => {
     await requireAuth(ctx);
     await doBackfill(ctx);
+  },
+});
+
+const PROFIT_RE = /^profit$/i;
+
+// Extracts line items from an uploaded invoice PDF and returns an editable
+// preview without writing anything to the catalog.
+export const importFromPdf = action({
+  args: { storageId: v.id("_storage"), fileName: v.string() },
+  handler: async (ctx, { storageId, fileName }): Promise<ImportPreview> => {
+    await requireAuth(ctx);
+    const extracted = await ctx.runAction(api.invoices.parseInvoice, { storageId });
+    const filtered = extracted.lineItems.filter(
+      (item) => item.description.trim() !== "" && !PROFIT_RE.test(item.description.trim()),
+    );
+    return {
+      storageId,
+      fileName,
+      lineItems: filtered,
+      total: extracted.total,
+      totalMismatchWarning: extracted.totalMismatchWarning,
+    };
+  },
+});
+
+// Ingests a confirmed (possibly user-edited) set of line items from a PDF
+// import into the catalog via syncSource, then records the import.
+export const confirmImport = mutation({
+  args: {
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    lineItems: v.array(
+      v.object({ description: v.string(), qty: v.number(), unitPrice: v.number() }),
+    ),
+  },
+  handler: async (ctx, { storageId, fileName, lineItems }) => {
+    await requireAuth(ctx);
+    const now = Date.now();
+    await syncSource(ctx, {
+      sourceType: "import",
+      sourceId: storageId,
+      observedAt: now,
+      lineItems,
+    });
+    const total = lineItems.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
+    const existing = await ctx.db
+      .query("catalogImports")
+      .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, { fileName, itemCount: lineItems.length, total, importedAt: now });
+    } else {
+      await ctx.db.insert("catalogImports", {
+        storageId,
+        fileName,
+        itemCount: lineItems.length,
+        total,
+        importedAt: now,
+      });
+    }
   },
 });
