@@ -530,73 +530,7 @@ function InvoiceBuilder() {
         }}
       >
         <div className="min-w-0 space-y-6">
-          <Card>
-            <button
-              type="button"
-              onClick={() => setAiOpen((o) => !o)}
-              className="flex w-full items-center justify-between px-6 py-4 text-left"
-            >
-              <span className="flex items-center gap-2 text-sm font-semibold">
-                <SparklesIcon className="size-4 text-indigo-500" />
-                Generate with AI
-              </span>
-              <ChevronDownIcon
-                className={`size-4 text-muted-foreground transition-transform duration-200 ${aiOpen ? "rotate-180" : ""}`}
-              />
-            </button>
-            <AnimatePresence initial={false}>
-              {aiOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2, ease: "easeOut" }}
-                  className="overflow-hidden"
-                >
-                  <div className="space-y-3 border-t border-border px-6 pb-5 pt-4">
-                    <p className="text-xs text-muted-foreground">
-                      Describe the work to be done and we&rsquo;ll draft ADA-compliant line items
-                      from your pricing catalog.
-                    </p>
-                    <Textarea
-                      placeholder="Describe what work needs to be done…"
-                      value={aiDescription}
-                      onChange={(e) => setAiDescription(e.target.value)}
-                      className="min-h-24 resize-y"
-                    />
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={toggleVoice}
-                        aria-label={isListening ? "Stop voice input" : "Start voice input"}
-                        className={isListening ? "border-red-400 text-red-500 hover:border-red-400 hover:text-red-500" : ""}
-                      >
-                        {isListening ? (
-                          <MicOffIcon className="size-4" />
-                        ) : (
-                          <MicIcon className="size-4" />
-                        )}
-                      </Button>
-                      {isListening && (
-                        <span className="text-xs text-red-500">Listening…</span>
-                      )}
-                      <Button
-                        variant="outline"
-                        disabled={!aiDescription.trim() || aiGenerating}
-                        onClick={() => void handleGenerate()}
-                        className="ml-auto"
-                      >
-                        <SparklesIcon data-icon="inline-start" />
-                        {aiGenerating ? "Generating…" : "Generate Line Items"}
-                      </Button>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </Card>
+          {/* Generate with AI card — disabled pending further testing */}
 
           <Card>
             <CardHeader>
@@ -767,12 +701,7 @@ function InvoiceBuilder() {
                   <dt>Total</dt>
                   <dd className="font-mono tabular-nums">{formatCurrency(total)}</dd>
                 </div>
-                <div className="flex justify-between gap-2 text-muted-foreground">
-                  <dt>Target range</dt>
-                  <dd className="font-mono tabular-nums">
-                    {formatCurrency(MIN_TARGET_AMOUNT)}–{formatCurrency(MAX_GRANT_AMOUNT)}
-                  </dd>
-                </div>
+
                 {total >= MAX_GRANT_AMOUNT && (
                   <div className="flex justify-between gap-2 text-red-600 dark:text-red-400">
                     <dt>Over by</dt>
