@@ -229,6 +229,7 @@ export default function NewPacketPage() {
           invoiceStorageId,
           waiverIds: data.waiverIds ?? [],
           specSheetIds: data.specSheetIds ?? [],
+          jobSpecificIds: data.jobSpecificIds ?? [],
         });
         clearTimers();
         setDoneCount(8);
