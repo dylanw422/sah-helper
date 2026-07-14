@@ -115,7 +115,7 @@ export default function SettingsPage() {
             }`}
           >
             <FileTextIcon className="size-3.5" />
-            PDF Templates
+            Documents
           </button>
         </nav>
 
