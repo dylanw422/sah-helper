@@ -21,13 +21,14 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { formatDate } from "@/lib/format";
 
 type FieldInfo = { name: string; type: string };
-type Category = "contract" | "waiver" | "spec-sheet";
+type Category = "contract" | "waiver" | "spec-sheet" | "job-specific";
 type PendingUpload = { kind: "slot"; key: string } | { kind: "custom"; category: Category };
 
 const ADD_LABELS: Record<Category, string> = {
   contract: "Add Contract",
   waiver: "Add Waiver",
   "spec-sheet": "Add Spec Sheet",
+  "job-specific": "Add Job-Specific Document",
 };
 
 export function TemplatesTab() {
@@ -51,6 +52,7 @@ export function TemplatesTab() {
   const customContracts = (customDocs ?? []).filter((d) => d.category === "contract");
   const waivers = (customDocs ?? []).filter((d) => d.category === "waiver");
   const specSheets = (customDocs ?? []).filter((d) => d.category === "spec-sheet");
+  const jobSpecificDocs = (customDocs ?? []).filter((d) => d.category === "job-specific");
 
   const uploadFile = async (file: File): Promise<Id<"_storage">> => {
     const uploadUrl = await generateUploadUrl();
@@ -363,6 +365,7 @@ export function TemplatesTab() {
 
       {immutableSection("Waivers", waivers, "waiver")}
       {immutableSection("Spec Sheets", specSheets, "spec-sheet")}
+      {immutableSection("Job-Specific Documents", jobSpecificDocs, "job-specific")}
 
       {Object.keys(fields).length > 0 && (
         <div className="space-y-6">
