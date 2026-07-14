@@ -10,6 +10,7 @@ const categoryValidator = v.union(
   v.literal("contract"),
   v.literal("waiver"),
   v.literal("spec-sheet"),
+  v.literal("job-specific"),
 );
 
 export const listCustomDocuments = query({

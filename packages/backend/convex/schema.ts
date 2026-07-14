@@ -95,7 +95,12 @@ export default defineSchema({
   // merged into every packet; waivers and spec sheets are immutable PDFs
   // selected per-packet on the Verify step.
   customDocuments: defineTable({
-    category: v.union(v.literal("contract"), v.literal("waiver"), v.literal("spec-sheet")),
+    category: v.union(
+      v.literal("contract"),
+      v.literal("waiver"),
+      v.literal("spec-sheet"),
+      v.literal("job-specific"),
+    ),
     displayName: v.string(),
     storageId: v.id("_storage"),
     uploadedAt: v.number(),
