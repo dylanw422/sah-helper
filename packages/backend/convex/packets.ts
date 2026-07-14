@@ -41,6 +41,7 @@ export const generatePacket = action({
     invoiceStorageId: v.id("_storage"),
     waiverIds: v.array(v.id("customDocuments")),
     specSheetIds: v.array(v.id("customDocuments")),
+    jobSpecificIds: v.array(v.id("customDocuments")),
   },
   handler: async (
     ctx,
@@ -262,7 +263,7 @@ export const generatePacket = action({
     // (made by re-storing the library blob directly, no byte materialization)
     // so deleting a library document later must not break regeneration.
     const selectedEntries: (typeof entries)[0][] = [];
-    for (const id of [...args.waiverIds, ...args.specSheetIds]) {
+    for (const id of [...args.waiverIds, ...args.specSheetIds, ...args.jobSpecificIds]) {
       const selected = await ctx.runQuery(internal.customDocuments.getCustomDocumentInternal, {
         id,
       });
