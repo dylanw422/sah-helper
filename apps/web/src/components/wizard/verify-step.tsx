@@ -44,6 +44,7 @@ export type VerifiedData = {
   // that construct VerifiedData before that step can omit them.
   waiverIds?: Id<"customDocuments">[];
   specSheetIds?: Id<"customDocuments">[];
+  jobSpecificIds?: Id<"customDocuments">[];
 };
 
 type EditableLineItem = {
@@ -96,8 +97,12 @@ export function VerifyStep({
   const customDocs = useQuery(api.customDocuments.listCustomDocuments, {});
   const waivers = (customDocs ?? []).filter((d) => d.category === "waiver");
   const specSheets = (customDocs ?? []).filter((d) => d.category === "spec-sheet");
+  const jobSpecificDocs = (customDocs ?? []).filter((d) => d.category === "job-specific");
   const [selectedWaivers, setSelectedWaivers] = useState<Set<Id<"customDocuments">>>(new Set());
   const [selectedSpecSheets, setSelectedSpecSheets] = useState<Set<Id<"customDocuments">>>(
+    new Set(),
+  );
+  const [selectedJobSpecific, setSelectedJobSpecific] = useState<Set<Id<"customDocuments">>>(
     new Set(),
   );
 
@@ -149,6 +154,9 @@ export function VerifyStep({
       // Ids in list order (upload order), not click order.
       waiverIds: waivers.filter((d) => selectedWaivers.has(d._id)).map((d) => d._id),
       specSheetIds: specSheets.filter((d) => selectedSpecSheets.has(d._id)).map((d) => d._id),
+      jobSpecificIds: jobSpecificDocs
+        .filter((d) => selectedJobSpecific.has(d._id))
+        .map((d) => d._id),
     });
   };
 
@@ -248,6 +256,15 @@ export function VerifyStep({
             docs={specSheets}
             selected={selectedSpecSheets}
             onChange={setSelectedSpecSheets}
+          />
+        )}
+
+        {jobSpecificDocs.length > 0 && (
+          <DocumentSelectCard
+            title="Job-Specific Documents"
+            docs={jobSpecificDocs}
+            selected={selectedJobSpecific}
+            onChange={setSelectedJobSpecific}
           />
         )}
 
