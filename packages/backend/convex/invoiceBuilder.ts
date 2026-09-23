@@ -1,9 +1,11 @@
+import { storeWorkspaceFile } from "./lib/files";
 import { v } from "convex/values";
 
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action, mutation, query } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
+import { assertWorkspace } from "./lib/workspaces";
 import { syncSource } from "./catalog";
 import { buildInvoicePdf } from "./lib/invoicePdf";
 import { lineItemValidator } from "./schema";
@@ -21,8 +23,11 @@ export const buildInvoice = action({
     invoiceDate: v.string(),
     lineItems: v.array(lineItemValidator),
   },
-  handler: async (ctx, args): Promise<{ storageId: Id<"_storage">; url: string }> => {
-    await requireAuth(ctx);
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ storageId: Id<"_storage">; url: string }> => {
+    const workspaceId = await requireAuth(ctx);
 
     const settings = await ctx.runQuery(api.settings.getSettings);
     if (!settings) {
@@ -48,11 +53,14 @@ export const buildInvoice = action({
     });
 
     const bytes = await doc.save();
-    const storageId = await ctx.storage.store(
+    const storageId = await storeWorkspaceFile(
+      ctx,
       new Blob([bytes as BlobPart], { type: "application/pdf" }),
+      workspaceId,
     );
     const url = await ctx.storage.getUrl(storageId);
-    if (!url) throw new Error("Could not create a download URL for the invoice.");
+    if (!url)
+      throw new Error("Could not create a download URL for the invoice.");
     return { storageId, url };
   },
 });
@@ -72,18 +80,26 @@ export const saveInvoice = mutation({
     lineItems: v.array(lineItemValidator),
   },
   handler: async (ctx, { id, ...data }) => {
-    await requireAuth(ctx);
+    const workspaceId = await requireAuth(ctx);
     const total = data.lineItems.reduce((sum, item) => sum + item.amount, 0);
     const now = Date.now();
     let savedId: Id<"invoices">;
     if (id) {
+      assertWorkspace(await ctx.db.get(id), workspaceId);
       await ctx.db.patch(id, { ...data, total, updatedAt: now });
       savedId = id;
     } else {
-      savedId = await ctx.db.insert("invoices", { ...data, total, createdAt: now, updatedAt: now });
+      savedId = await ctx.db.insert("invoices", {
+        workspaceId,
+        ...data,
+        total,
+        createdAt: now,
+        updatedAt: now,
+      });
     }
     const observedAt = Date.parse(`${data.invoiceDate}T00:00:00`) || now;
     await syncSource(ctx, {
+      workspaceId,
       sourceType: "invoice",
       sourceId: savedId,
       observedAt,
@@ -96,25 +112,35 @@ export const saveInvoice = mutation({
 export const listInvoices = query({
   args: {},
   handler: async (ctx) => {
-    await requireAuth(ctx);
-    return await ctx.db.query("invoices").withIndex("by_updatedAt").order("desc").take(200);
+    const workspaceId = await requireAuth(ctx);
+    return await ctx.db
+      .query("invoices")
+      .withIndex("by_workspaceId_and_updatedAt", (q) =>
+        q.eq("workspaceId", workspaceId),
+      )
+      .order("desc")
+      .take(200);
   },
 });
 
 export const getInvoice = query({
   args: { id: v.id("invoices") },
   handler: async (ctx, { id }) => {
-    await requireAuth(ctx);
-    return await ctx.db.get(id);
+    const workspaceId = await requireAuth(ctx);
+    const record = await ctx.db.get(id);
+    assertWorkspace(record, workspaceId);
+    return record;
   },
 });
 
 export const deleteInvoice = mutation({
   args: { id: v.id("invoices") },
   handler: async (ctx, { id }) => {
-    await requireAuth(ctx);
+    const workspaceId = await requireAuth(ctx);
+    assertWorkspace(await ctx.db.get(id), workspaceId);
     // Retract observations before deleting so catalog stats recompute correctly.
     await syncSource(ctx, {
+      workspaceId,
       sourceType: "invoice",
       sourceId: id,
       observedAt: Date.now(),
@@ -127,14 +153,20 @@ export const deleteInvoice = mutation({
 export const suggestInvoiceNumber = query({
   args: {},
   handler: async (ctx) => {
-    await requireAuth(ctx);
+    const workspaceId = await requireAuth(ctx);
     const year = new Date().getFullYear();
     const prefix = `INV-${year}-`;
     // Saved invoices and packet-generated clients both consume numbers, so
     // suggest one past the max suffix seen in either table.
     const [clients, invoices] = await Promise.all([
-      ctx.db.query("clients").take(1000),
-      ctx.db.query("invoices").take(1000),
+      ctx.db
+        .query("clients")
+        .withIndex("by_workspaceId", (q) => q.eq("workspaceId", workspaceId))
+        .take(1000),
+      ctx.db
+        .query("invoices")
+        .withIndex("by_workspaceId", (q) => q.eq("workspaceId", workspaceId))
+        .take(1000),
     ]);
     const numbers = [
       ...clients.map((c) => c.invoiceNumber),

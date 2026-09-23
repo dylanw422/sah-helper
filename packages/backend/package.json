@@ -5,6 +5,7 @@
   "license": "ISC",
   "author": "",
   "scripts": {
+    "test": "vitest run",
     "dev": "convex dev",
     "dev:setup": "convex dev --configure --until-success"
   },
@@ -18,8 +19,12 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
     "@sah-helper/config": "workspace:*",
     "@types/node": "^24.3.0",
-    "typescript": "catalog:"
+    "convex-test": "0.0.54",
+    "typescript": "catalog:",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.0"
   }
 }

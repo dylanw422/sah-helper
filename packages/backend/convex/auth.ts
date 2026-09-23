@@ -1,7 +1,7 @@
 import { createClient, type GenericCtx } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
-import { APIError } from "better-auth/api";
 import { betterAuth } from "better-auth/minimal";
+import { APIError } from "better-auth/api";
 
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
@@ -26,18 +26,18 @@ function createAuth(ctx: GenericCtx<DataModel>) {
     databaseHooks: {
       user: {
         create: {
-          // Lock the app to invited users: reject account creation for any
-          // email not present in the authorizedUsers table.
           before: async (user) => {
-            if (!("runQuery" in ctx)) {
-              throw new APIError("FORBIDDEN", { message: "Sign up is disabled" });
-            }
-            const allowed = await ctx.runQuery(internal.users.isEmailAuthorized, {
-              email: user.email.toLowerCase(),
-            });
-            if (!allowed) {
-              throw new APIError("FORBIDDEN", { message: "Sign up is disabled" });
-            }
+            // Public registration must never claim an existing legacy membership.
+            if (!("runQuery" in ctx)) throw new APIError("FORBIDDEN");
+            const reserved = await ctx.runQuery(
+              internal.users.isEmailAuthorized,
+              { email: user.email.toLowerCase() },
+            );
+            if (reserved)
+              throw new APIError("FORBIDDEN", {
+                message:
+                  "This email already has workspace access. Please sign in.",
+              });
             return { data: user };
           },
         },

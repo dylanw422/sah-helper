@@ -43,6 +43,7 @@ import { downloadFile } from "@/lib/download";
 import { formatCurrency, formatDisplayDate, maskPhone } from "@/lib/format";
 import { grantBand, MAX_GRANT_AMOUNT, MIN_TARGET_AMOUNT } from "@/lib/grant";
 import { writeInvoiceDraft } from "@/lib/invoice-draft";
+import { useWorkspaceId } from "@/components/workspace-context";
 
 type BuiltInvoice = { storageId: Id<"_storage">; url: string };
 
@@ -105,6 +106,7 @@ function InvoiceBuilder() {
   const idParam = useSearchParams().get("id");
   const invoiceId = (idParam as Id<"invoices"> | null) ?? null;
   const settings = useQuery(api.settings.getSettings);
+  const workspaceId = useWorkspaceId();
   const suggestedNumber = useQuery(
     api.invoiceBuilder.suggestInvoiceNumber,
     invoiceId ? "skip" : {},
@@ -330,7 +332,7 @@ function InvoiceBuilder() {
     setPending("start");
     try {
       const { storageId } = await ensureBuilt();
-      writeInvoiceDraft({ invoiceStorageId: storageId, data: toVerifiedData() });
+      writeInvoiceDraft(workspaceId, { invoiceStorageId: storageId, data: toVerifiedData() });
       router.push("/new-packet");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not build the invoice.");

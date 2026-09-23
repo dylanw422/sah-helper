@@ -3,6 +3,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { v } from "convex/values";
 
+import { internal } from "./_generated/api";
 import { action } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
 
@@ -83,7 +84,9 @@ function toNumber(value: unknown, fallback: number): number {
   return fallback;
 }
 
-function tryParseInvoiceJson(text: string): Omit<ExtractedInvoiceData, "totalMismatchWarning"> | null {
+function tryParseInvoiceJson(
+  text: string,
+): Omit<ExtractedInvoiceData, "totalMismatchWarning"> | null {
   // Tolerate accidental markdown fences despite prompt instructions
   const cleaned = text
     .trim()
@@ -103,12 +106,16 @@ function tryParseInvoiceJson(text: string): Omit<ExtractedInvoiceData, "totalMis
     return {
       clientName: parsed.clientName,
       clientStreet: parsed.clientStreet,
-      clientCity: typeof parsed.clientCity === "string" ? parsed.clientCity : "",
-      clientState: typeof parsed.clientState === "string" ? parsed.clientState : "",
+      clientCity:
+        typeof parsed.clientCity === "string" ? parsed.clientCity : "",
+      clientState:
+        typeof parsed.clientState === "string" ? parsed.clientState : "",
       clientZip: typeof parsed.clientZip === "string" ? parsed.clientZip : "",
       clientPhone: parsed.clientPhone,
-      invoiceNumber: typeof parsed.invoiceNumber === "string" ? parsed.invoiceNumber : "",
-      caseNumber: typeof parsed.caseNumber === "string" ? parsed.caseNumber : "",
+      invoiceNumber:
+        typeof parsed.invoiceNumber === "string" ? parsed.invoiceNumber : "",
+      caseNumber:
+        typeof parsed.caseNumber === "string" ? parsed.caseNumber : "",
       issueDate: typeof parsed.issueDate === "string" ? parsed.issueDate : "",
       lineItems: parsed.lineItems
         .filter(
@@ -116,12 +123,14 @@ function tryParseInvoiceJson(text: string): Omit<ExtractedInvoiceData, "totalMis
             typeof item === "object" && item !== null,
         )
         .map((item: Record<string, unknown>) => ({
-          description: typeof item.description === "string" ? item.description : "",
+          description:
+            typeof item.description === "string" ? item.description : "",
           qty: toNumber(item.qty, 1),
           unitPrice: toNumber(item.unitPrice, 0),
           amount: toNumber(item.amount, 0),
         })),
-      subtotal: typeof parsed.subtotal === "number" ? parsed.subtotal : parsed.total,
+      subtotal:
+        typeof parsed.subtotal === "number" ? parsed.subtotal : parsed.total,
       total: parsed.total,
     };
   } catch {
@@ -133,6 +142,9 @@ export const parseInvoice = action({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, args): Promise<ExtractedInvoiceData> => {
     await requireAuth(ctx);
+    await ctx.runQuery(internal.uploads.checkFile, {
+      storageId: args.storageId,
+    });
 
     const blob = await ctx.storage.get(args.storageId);
     if (!blob) throw new Error("Invoice file not found in storage.");
@@ -173,10 +185,15 @@ export const parseInvoice = action({
       parsed = tryParseInvoiceJson(await callClaude());
     }
     if (!parsed) {
-      throw new Error("Could not extract data from this invoice. Please try again.");
+      throw new Error(
+        "Could not extract data from this invoice. Please try again.",
+      );
     }
 
-    const lineItemSum = parsed.lineItems.reduce((sum, item) => sum + item.amount, 0);
+    const lineItemSum = parsed.lineItems.reduce(
+      (sum, item) => sum + item.amount,
+      0,
+    );
     const totalMismatchWarning = Math.abs(lineItemSum - parsed.total) > 0.01;
 
     return { ...parsed, totalMismatchWarning };

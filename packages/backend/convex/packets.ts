@@ -1,3 +1,4 @@
+import { storeWorkspaceFile } from "./lib/files";
 import { v } from "convex/values";
 
 import { api, internal } from "./_generated/api";
@@ -6,7 +7,11 @@ import type { Id } from "./_generated/dataModel";
 import { requireAuth } from "./lib/auth";
 import { buildDrawSchedule, type DrawSchedule } from "./lib/drawSchedule";
 import { fillTemplate, mergeDocsIncrementally, mergePdfBytes } from "./lib/pdf";
-import { buildFieldValues, buildSizeGroups, type PacketData } from "./lib/pdfFieldMap";
+import {
+  buildFieldValues,
+  buildSizeGroups,
+  type PacketData,
+} from "./lib/pdfFieldMap";
 import { buildConstructionStageCompletionPdf } from "./lib/constructionStageCompletionPdf";
 import { buildScopeOfWorkPdf, type ScopeSection } from "./lib/scopeOfWorkPdf";
 import {
@@ -47,25 +52,35 @@ export const generatePacket = action({
     ctx,
     args,
   ): Promise<{ clientId: Id<"clients">; packetStorageId: Id<"_storage"> }> => {
-    await requireAuth(ctx);
+    const workspaceId = await requireAuth(ctx);
+    await ctx.runQuery(internal.uploads.checkFile, {
+      storageId: args.invoiceStorageId,
+    });
 
     const settings = await ctx.runQuery(api.settings.getSettings);
     if (!settings) {
-      throw new Error("Contractor settings are not configured. Visit Settings before generating packets.");
+      throw new Error(
+        "Contractor settings are not configured. Visit Settings before generating packets.",
+      );
     }
 
     const templates = await ctx.runQuery(api.templates.listTemplates);
     const drawCount = args.drawCount as DrawCount;
 
     const uploadedDocs = DOC_ORDER.filter(
-      (doc): doc is UploadedDocName => !(GENERATED_DOCS as readonly string[]).includes(doc),
+      (doc): doc is UploadedDocName =>
+        !(GENERATED_DOCS as readonly string[]).includes(doc),
     );
-    const neededKeys = uploadedDocs.map((doc) => getTemplateKey(doc, drawCount));
+    const neededKeys = uploadedDocs.map((doc) =>
+      getTemplateKey(doc, drawCount),
+    );
     const missing = neededKeys.filter(
       (key) => !templates.find((t) => t.key === key && t.uploaded),
     );
     if (missing.length > 0) {
-      throw new Error(`Missing PDF templates: ${missing.join(", ")}. Upload them before generating packets.`);
+      throw new Error(
+        `Missing PDF templates: ${missing.join(", ")}. Upload them before generating packets.`,
+      );
     }
 
     const schedule = buildDrawSchedule(args.lineItems, drawCount);
@@ -117,10 +132,18 @@ export const generatePacket = action({
     // keeps the build phase's peak memory at roughly one document at a time
     // instead of holding every serialized packet doc in the heap at once. The
     // merge below streams these back from storage one at a time.
-    const entries: { filename: string; storageId: Id<"_storage">; specSheet?: boolean }[] = [];
+    const entries: {
+      filename: string;
+      storageId: Id<"_storage">;
+      specSheet?: boolean;
+    }[] = [];
 
     const storeBytes = (bytes: Uint8Array) =>
-      ctx.storage.store(new Blob([bytes as BlobPart], { type: "application/pdf" }));
+      storeWorkspaceFile(
+        ctx,
+        new Blob([bytes as BlobPart], { type: "application/pdf" }),
+        workspaceId,
+      );
 
     for (const docName of DOC_ORDER) {
       if (docName === "scope-of-work") {
@@ -130,7 +153,10 @@ export const generatePacket = action({
           caseNumber: args.caseNumber,
           sections: scopeSections,
         });
-        entries.push({ filename: "Scope of Work.pdf", storageId: await storeBytes(await scopeDoc.save()) });
+        entries.push({
+          filename: "Scope of Work.pdf",
+          storageId: await storeBytes(await scopeDoc.save()),
+        });
         continue;
       }
 
@@ -156,7 +182,10 @@ export const generatePacket = action({
       if (!fieldMap) {
         // Mapping hasn't run for this template yet (upload still processing or
         // pre-dates auto-mapping) — generate and persist it now.
-        fieldMap = await ctx.runAction(internal.templateMapping.mapTemplateFields, { key });
+        fieldMap = await ctx.runAction(
+          internal.templateMapping.mapTemplateFields,
+          { templateId: template.id! },
+        );
       }
 
       // Lien release templates uploaded before the checkbox keys existed won't
@@ -168,7 +197,10 @@ export const generatePacket = action({
         !Object.values(fieldMap).includes("isNotFinalDraw") &&
         !Object.values(fieldMap).includes("isFinalDraw")
       ) {
-        fieldMap = await ctx.runAction(internal.templateMapping.mapTemplateFields, { key });
+        fieldMap = await ctx.runAction(
+          internal.templateMapping.mapTemplateFields,
+          { templateId: template.id! },
+        );
       }
 
       const blob = await ctx.storage.get(template.storageId!);
@@ -211,7 +243,11 @@ export const generatePacket = action({
       let data = packetData;
       if (docName === "va-addendum") {
         const combined = `${settings.contractorName} / ${settings.contractorCompanyName}`;
-        data = { ...packetData, contractorName: combined, contractorCompanyName: combined };
+        data = {
+          ...packetData,
+          contractorName: combined,
+          contractorCompanyName: combined,
+        };
       }
 
       const filled = await fillTemplate(
@@ -219,7 +255,10 @@ export const generatePacket = action({
         buildFieldValues(data, fieldMap),
         buildSizeGroups(fieldMap),
       );
-      entries.push({ filename: TEMPLATE_DISPLAY_NAMES[key], storageId: await storeBytes(await filled.save()) });
+      entries.push({
+        filename: TEMPLATE_DISPLAY_NAMES[key],
+        storageId: await storeBytes(await filled.save()),
+      });
     }
 
     // Custom contract documents are always included, filled with the same
@@ -232,12 +271,18 @@ export const generatePacket = action({
     for (const custom of customContracts) {
       let fieldMap: Record<string, string> | undefined = custom.fieldMap;
       if (!fieldMap) {
-        fieldMap = await ctx.runAction(internal.templateMapping.mapCustomDocumentFields, {
-          id: custom._id,
-        });
+        fieldMap = await ctx.runAction(
+          internal.templateMapping.mapCustomDocumentFields,
+          {
+            id: custom._id,
+          },
+        );
       }
       const blob = await ctx.storage.get(custom.storageId);
-      if (!blob) throw new Error(`Document file missing from storage: ${custom.displayName}`);
+      if (!blob)
+        throw new Error(
+          `Document file missing from storage: ${custom.displayName}`,
+        );
       const filled = await fillTemplate(
         await blob.arrayBuffer(),
         buildFieldValues(packetData, fieldMap),
@@ -263,16 +308,27 @@ export const generatePacket = action({
     // (made by re-storing the library blob directly, no byte materialization)
     // so deleting a library document later must not break regeneration.
     const selectedEntries: (typeof entries)[0][] = [];
-    for (const id of [...args.waiverIds, ...args.specSheetIds, ...args.jobSpecificIds]) {
-      const selected = await ctx.runQuery(internal.customDocuments.getCustomDocumentInternal, {
-        id,
-      });
-      if (!selected) throw new Error(`Selected document no longer exists: ${id}`);
+    for (const id of [
+      ...args.waiverIds,
+      ...args.specSheetIds,
+      ...args.jobSpecificIds,
+    ]) {
+      const selected = await ctx.runQuery(
+        api.customDocuments.getCustomDocument,
+        {
+          id,
+        },
+      );
+      if (!selected)
+        throw new Error(`Selected document no longer exists: ${id}`);
       const blob = await ctx.storage.get(selected.storageId);
-      if (!blob) throw new Error(`Document file missing from storage: ${selected.displayName}`);
+      if (!blob)
+        throw new Error(
+          `Document file missing from storage: ${selected.displayName}`,
+        );
       selectedEntries.push({
         filename: `${selected.displayName}.pdf`,
-        storageId: await ctx.storage.store(blob),
+        storageId: await storeWorkspaceFile(ctx, blob, workspaceId),
         specSheet: args.specSheetIds.includes(id),
       });
     }
@@ -285,7 +341,8 @@ export const generatePacket = action({
       entries.map((e) => ({
         load: async () => {
           const blob = await ctx.storage.get(e.storageId);
-          if (!blob) throw new Error(`File missing from storage: ${e.filename}`);
+          if (!blob)
+            throw new Error(`File missing from storage: ${e.filename}`);
           return blob.arrayBuffer();
         },
         specSheet: e.specSheet,
@@ -293,21 +350,24 @@ export const generatePacket = action({
     );
     const packetStorageId = await storeBytes(mergedBytes);
 
-    const clientId: Id<"clients"> = await ctx.runMutation(api.clients.createClient, {
-      name: args.name,
-      street: args.street,
-      city: args.city,
-      state: args.state,
-      zip: args.zip,
-      phone: args.phone,
-      invoiceNumber: args.invoiceNumber,
-      caseNumber: args.caseNumber,
-      drawCount: args.drawCount,
-      lineItems: args.lineItems,
-      subtotal,
-      total,
-      packetStorageId,
-    });
+    const clientId: Id<"clients"> = await ctx.runMutation(
+      api.clients.createClient,
+      {
+        name: args.name,
+        street: args.street,
+        city: args.city,
+        state: args.state,
+        zip: args.zip,
+        phone: args.phone,
+        invoiceNumber: args.invoiceNumber,
+        caseNumber: args.caseNumber,
+        drawCount: args.drawCount,
+        lineItems: args.lineItems,
+        subtotal,
+        total,
+        packetStorageId,
+      },
+    );
 
     // Register each stored document with the file drawer so it can list and
     // re-merge them later. Storage was already done during the build phase.
@@ -328,7 +388,7 @@ export const generatePacket = action({
 export const regeneratePacket = action({
   args: { clientId: v.id("clients") },
   handler: async (ctx, args): Promise<{ packetStorageId: Id<"_storage"> }> => {
-    await requireAuth(ctx);
+    const workspaceId = await requireAuth(ctx);
 
     const files = await ctx.runQuery(api.clientFiles.listClientFiles, {
       clientId: args.clientId,
@@ -345,8 +405,10 @@ export const regeneratePacket = action({
     }
 
     const mergedBytes = await mergePdfBytes(docBytes);
-    const packetStorageId = await ctx.storage.store(
+    const packetStorageId = await storeWorkspaceFile(
+      ctx,
       new Blob([mergedBytes as BlobPart], { type: "application/pdf" }),
+      workspaceId,
     );
 
     await ctx.runMutation(api.clients.setPacketStorageId, {
@@ -364,14 +426,19 @@ function buildDrawFields(
   lineItems: { description: string }[],
 ): Pick<
   PacketData,
-  `draw${1 | 2 | 3 | 4 | 5 | 6}Amount` | "finalDrawAmount" | `draw${1 | 2 | 3 | 4 | 5}Description`
+  | `draw${1 | 2 | 3 | 4 | 5 | 6}Amount`
+  | "finalDrawAmount"
+  | `draw${1 | 2 | 3 | 4 | 5}Description`
 > {
   const fields = {} as Record<string, string>;
   for (let i = 1; i <= 6; i++) {
     const amount = schedule.drawAmounts[i - 1];
-    fields[`draw${i}Amount`] = amount !== undefined ? formatCurrency(amount) : "";
+    fields[`draw${i}Amount`] =
+      amount !== undefined ? formatCurrency(amount) : "";
   }
-  fields.finalDrawAmount = formatCurrency(schedule.drawAmounts[schedule.drawAmounts.length - 1]);
+  fields.finalDrawAmount = formatCurrency(
+    schedule.drawAmounts[schedule.drawAmounts.length - 1],
+  );
   for (let i = 1; i <= 5; i++) {
     const group = schedule.groups[i - 1];
     fields[`draw${i}Description`] = group
@@ -383,7 +450,10 @@ function buildDrawFields(
 
 function buildLineItemFields(
   lineItems: { description: string; amount: number }[],
-): Pick<PacketData, `lineItem${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10}${"Description" | "Amount"}`> {
+): Pick<
+  PacketData,
+  `lineItem${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10}${"Description" | "Amount"}`
+> {
   const fields = {} as Record<string, string>;
   for (let i = 1; i <= 10; i++) {
     const item = lineItems[i - 1];

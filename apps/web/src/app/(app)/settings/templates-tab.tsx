@@ -35,6 +35,7 @@ export function TemplatesTab() {
   const convex = useConvex();
   const templates = useQuery(api.templates.listTemplates);
   const customDocs = useQuery(api.customDocuments.listCustomDocuments, {});
+  const workspace = useQuery(api.workspaces.current);
   const generateUploadUrl = useMutation(api.templates.generateTemplateUploadUrl);
   const registerTemplate = useMutation(api.templates.registerTemplate);
   const registerCustomDocument = useMutation(api.customDocuments.registerCustomDocument);
@@ -212,6 +213,9 @@ export function TemplatesTab() {
   const immutableSection = (title: string, docs: Doc<"customDocuments">[], category: Category) => (
     <div className="mb-6">
       <h2 className="mb-2 text-sm font-semibold">{title}</h2>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Shared across all workspaces. Documents can be removed by the workspace that uploaded them.
+      </p>
       <div className="border border-border">
         {docs.length === 0 ? (
           <p className="px-3 py-3 text-xs text-muted-foreground">
@@ -239,7 +243,7 @@ export function TemplatesTab() {
                         <EyeIcon data-icon="inline-start" />
                         View
                       </Button>
-                      <Button
+                      {(doc.workspaceId ?? "legacy") === workspace?.id ? <Button
                         variant="outline"
                         size="xs"
                         aria-label={`Delete ${doc.displayName}`}
@@ -247,7 +251,7 @@ export function TemplatesTab() {
                         onClick={() => setPendingDelete(doc)}
                       >
                         <Trash2Icon className="size-3.5 text-destructive" />
-                      </Button>
+                      </Button> : null}
                     </div>
                   </TableCell>
                 </TableRow>

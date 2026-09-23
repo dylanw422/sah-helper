@@ -62,7 +62,8 @@ function tryParseMapping(
   } catch {
     return null;
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    return null;
   const fieldMap: Record<string, string> = {};
   for (const [fieldName, key] of Object.entries(parsed)) {
     if (!fieldNames.has(fieldName)) continue;
@@ -103,19 +104,27 @@ async function generateFieldMap(
     mapping = tryParseMapping(await callClaude(), nameSet);
   }
   if (!mapping) {
-    throw new Error(`Could not generate a field mapping for template: ${label}`);
+    throw new Error(
+      `Could not generate a field mapping for template: ${label}`,
+    );
   }
   return mapping;
 }
 
 export const mapTemplateFields = internalAction({
-  args: { key: v.string() },
+  args: { templateId: v.id("pdfTemplates") },
   handler: async (ctx, args): Promise<Record<string, string>> => {
-    const templates = await ctx.runQuery(internal.templates.listTemplatesInternal);
-    const template = templates.find((t) => t.key === args.key);
-    if (!template) throw new Error(`Template not uploaded: ${args.key}`);
+    const template = await ctx.runQuery(
+      internal.templates.getTemplateInternal,
+      args,
+    );
+    if (!template) throw new Error("Template not found");
 
-    const fieldMap = await generateFieldMap(ctx, template.storageId, args.key);
+    const fieldMap = await generateFieldMap(
+      ctx,
+      template.storageId,
+      template.key,
+    );
 
     await ctx.runMutation(internal.templates.saveFieldMap, {
       templateId: template._id,
@@ -128,12 +137,19 @@ export const mapTemplateFields = internalAction({
 export const mapCustomDocumentFields = internalAction({
   args: { id: v.id("customDocuments") },
   handler: async (ctx, args): Promise<Record<string, string>> => {
-    const doc = await ctx.runQuery(internal.customDocuments.getCustomDocumentInternal, {
-      id: args.id,
-    });
+    const doc = await ctx.runQuery(
+      internal.customDocuments.getCustomDocumentInternal,
+      {
+        id: args.id,
+      },
+    );
     if (!doc) throw new Error("Custom document not found.");
 
-    const fieldMap = await generateFieldMap(ctx, doc.storageId, doc.displayName);
+    const fieldMap = await generateFieldMap(
+      ctx,
+      doc.storageId,
+      doc.displayName,
+    );
 
     await ctx.runMutation(internal.customDocuments.saveCustomFieldMap, {
       id: args.id,

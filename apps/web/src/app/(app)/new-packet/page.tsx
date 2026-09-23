@@ -20,6 +20,7 @@ import { StepIndicator } from "@/components/wizard/step-indicator";
 import { UploadStep } from "@/components/wizard/upload-step";
 import { VerifyStep, type VerifiedData } from "@/components/wizard/verify-step";
 import { consumeInvoiceDraft } from "@/lib/invoice-draft";
+import { useWorkspaceId } from "@/components/workspace-context";
 import { formatCurrency, formatDisplayDate } from "@/lib/format";
 
 const EXTRACTION_STEPS = [
@@ -54,6 +55,7 @@ function toStepStates(total: number, doneCount: number, processing: boolean): St
 }
 
 export default function NewPacketPage() {
+  const workspaceId = useWorkspaceId();
   const [phase, setPhase] = useState<WizardPhase>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [savedInvoice, setSavedInvoice] = useState<Doc<"invoices"> | null>(null);
@@ -91,13 +93,13 @@ export default function NewPacketPage() {
   // A draft written by the Invoice Builder skips upload + AI extraction:
   // the data is already structured, only the draw count is missing.
   useEffect(() => {
-    const draft = consumeInvoiceDraft();
+    const draft = consumeInvoiceDraft(workspaceId);
     if (!draft) return;
     setInvoiceStorageId(draft.invoiceStorageId);
     setExtracted({ ...draft.data, totalMismatchWarning: false });
     setFromBuilder(true);
     setPhase("draw-count");
-  }, []);
+  }, [workspaceId]);
 
   const later = useCallback((fn: () => void, ms: number) => {
     timeoutsRef.current.push(setTimeout(fn, ms));

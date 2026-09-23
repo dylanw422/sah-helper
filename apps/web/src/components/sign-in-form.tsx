@@ -3,6 +3,7 @@ import { Input } from "@sah-helper/ui/components/input";
 import { Label } from "@sah-helper/ui/components/label";
 import { useForm } from "@tanstack/react-form";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import z from "zod";
 
@@ -100,10 +101,17 @@ export default function SignInForm() {
         </div>
 
         <form.Subscribe
-          selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}
+          selector={(state) => ({
+            canSubmit: state.canSubmit,
+            isSubmitting: state.isSubmitting,
+          })}
         >
           {({ canSubmit, isSubmitting }) => (
-            <Button type="submit" className="w-full" disabled={!canSubmit || isSubmitting}>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={!canSubmit || isSubmitting}
+            >
               {isSubmitting ? "Submitting..." : "Sign In"}
             </Button>
           )}
@@ -111,7 +119,13 @@ export default function SignInForm() {
       </form>
 
       <p className="mt-4 text-center text-xs text-muted-foreground">
-        First time here? Sign in with your email and the 6-digit code you were given.
+        First time here? Sign in with your email and the 6-digit code you were
+        given.
+      </p>
+      <p className="mt-5 text-center text-sm">
+        <Link href="/sign-up" className="underline underline-offset-4">
+          Create a workspace for your company
+        </Link>
       </p>
     </div>
   );

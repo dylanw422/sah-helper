@@ -9,14 +9,18 @@ export type InvoiceDraft = {
   data: VerifiedData;
 };
 
-export function writeInvoiceDraft(draft: InvoiceDraft) {
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+export function writeInvoiceDraft(workspaceId: string, draft: InvoiceDraft) {
+  sessionStorage.setItem(
+    `${STORAGE_KEY}:${workspaceId}`,
+    JSON.stringify(draft),
+  );
 }
 
-export function consumeInvoiceDraft(): InvoiceDraft | null {
-  const raw = sessionStorage.getItem(STORAGE_KEY);
+export function consumeInvoiceDraft(workspaceId: string): InvoiceDraft | null {
+  const key = `${STORAGE_KEY}:${workspaceId}`;
+  const raw = sessionStorage.getItem(key);
   if (!raw) return null;
-  sessionStorage.removeItem(STORAGE_KEY);
+  sessionStorage.removeItem(key);
   try {
     return JSON.parse(raw) as InvoiceDraft;
   } catch {

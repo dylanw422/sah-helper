@@ -1,9 +1,19 @@
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
-import { action, internalMutation, internalQuery, query } from "./_generated/server";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  query,
+} from "./_generated/server";
 import { authComponent, createAuth } from "./auth";
 import { requireAuth } from "./lib/auth";
+import {
+  assertAdmin,
+  assertWorkspace,
+  requireMembership,
+} from "./lib/workspaces";
 
 function generateCode() {
   const n = crypto.getRandomValues(new Uint32Array(1))[0]!;
@@ -13,8 +23,15 @@ function generateCode() {
 export const listUsers = query({
   args: {},
   handler: async (ctx) => {
-    await requireAuth(ctx);
-    const rows = await ctx.db.query("authorizedUsers").order("desc").take(200);
+    const member = await requireMembership(ctx);
+    if (member.role === "member") return [];
+    const rows = await ctx.db
+      .query("authorizedUsers")
+      .withIndex("by_workspaceId", (q) =>
+        q.eq("workspaceId", member.workspaceId),
+      )
+      .order("desc")
+      .take(200);
     return rows.map((r) => ({
       _id: r._id,
       email: r.email,
@@ -43,6 +60,8 @@ export const addUser = action({
   args: { email: v.string(), name: v.string() },
   handler: async (ctx, args) => {
     await requireAuth(ctx);
+    const member = await ctx.runQuery(internal.workspaces.requireCurrent, {});
+    assertAdmin(member);
     const email = args.email.trim().toLowerCase();
     const name = args.name.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -57,19 +76,28 @@ export const addUser = action({
     }
 
     const code = generateCode();
-    await ctx.runMutation(internal.users.insertAuthorizedUser, { email, name, code });
+    let authUserId: string;
     try {
-      await createAuth(ctx).api.signUpEmail({
+      const result = await createAuth(ctx).api.signUpEmail({
         body: {
           email,
           password: code,
           name,
         },
       });
+      authUserId = result.user.id;
     } catch (err) {
-      await ctx.runMutation(internal.users.removeByEmail, { email });
-      throw new Error("Could not create user. They may already have an account.");
+      throw new Error(
+        "Could not create user. They may already have an account.",
+      );
     }
+    await ctx.runMutation(internal.users.insertAuthorizedUser, {
+      email,
+      name,
+      code,
+      authUserId,
+      workspaceId: member.workspaceId,
+    });
     return { code };
   },
 });
@@ -78,8 +106,13 @@ export const removeUser = action({
   args: { id: v.id("authorizedUsers") },
   handler: async (ctx, args) => {
     await requireAuth(ctx);
+    const member = await ctx.runQuery(internal.workspaces.requireCurrent, {});
+    assertAdmin(member);
     const row = await ctx.runQuery(internal.users.getById, { id: args.id });
     if (!row) return null;
+    assertWorkspace(row, member.workspaceId);
+    if (row.role === "owner")
+      throw new Error("Workspace owners cannot be removed.");
 
     const me = await authComponent.getAuthUser(ctx);
     if (me.email.toLowerCase() === row.email) {
@@ -152,9 +185,23 @@ export const getByEmail = internalQuery({
 });
 
 export const insertAuthorizedUser = internalMutation({
-  args: { email: v.string(), name: v.optional(v.string()), code: v.string() },
+  args: {
+    email: v.string(),
+    name: v.optional(v.string()),
+    code: v.string(),
+    authUserId: v.string(),
+    workspaceId: v.optional(v.id("workspaces")),
+  },
   handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("authorizedUsers")
+      .withIndex("by_email", (q) => q.eq("email", args.email))
+      .unique();
+    if (existing) throw new Error("This user already belongs to a workspace.");
     await ctx.db.insert("authorizedUsers", {
+      workspaceId: args.workspaceId,
+      authUserId: args.authUserId,
+      role: "member",
       email: args.email,
       name: args.name,
       code: args.code,

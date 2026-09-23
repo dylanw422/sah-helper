@@ -56,13 +56,14 @@ type Tab = "contractor" | "users" | "templates";
 
 const TAB_DESCRIPTIONS: Record<Tab, string> = {
   contractor: "Contractor information used to fill all VA documents.",
-  users: "Manage who can sign in to this application.",
+  users: "Manage who can access your company's workspace.",
   templates:
     "Upload the 12 blank VA templates. Field mapping happens automatically on upload — AI matches each PDF's form fields to packet data. Use Inspect to review the result.",
 };
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("contractor");
+  const workspace = useQuery(api.workspaces.current);
 
   return (
     <div
@@ -93,7 +94,7 @@ export default function SettingsPage() {
             <BuildingIcon className="size-3.5" />
             Contractor Info
           </button>
-          <button
+          {workspace?.role !== "member" ? <button
             type="button"
             onClick={() => setTab("users")}
             className={`flex items-center gap-2.5 rounded-sm px-3 py-2 text-xs font-medium transition-colors ${
@@ -104,7 +105,7 @@ export default function SettingsPage() {
           >
             <UsersIcon className="size-3.5" />
             Users
-          </button>
+          </button> : null}
           <button
             type="button"
             onClick={() => setTab("templates")}

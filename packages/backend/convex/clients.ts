@@ -1,31 +1,42 @@
+import { requireFile } from "./lib/files";
 import { v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
 import { syncSource } from "./catalog";
 import { requireAuth } from "./lib/auth";
+import { assertWorkspace } from "./lib/workspaces";
 import { lineItemValidator } from "./schema";
 
 export const listClients = query({
   args: {},
   handler: async (ctx) => {
-    await requireAuth(ctx);
-    return await ctx.db.query("clients").withIndex("by_createdAt").order("desc").take(1000);
+    const workspaceId = await requireAuth(ctx);
+    return await ctx.db
+      .query("clients")
+      .withIndex("by_workspaceId_and_createdAt", (q) =>
+        q.eq("workspaceId", workspaceId),
+      )
+      .order("desc")
+      .take(1000);
   },
 });
 
 export const getClient = query({
   args: { clientId: v.id("clients") },
   handler: async (ctx, args) => {
-    await requireAuth(ctx);
-    return await ctx.db.get(args.clientId);
+    const workspaceId = await requireAuth(ctx);
+    const record = await ctx.db.get(args.clientId);
+    assertWorkspace(record, workspaceId);
+    return record;
   },
 });
 
 export const getPacketDownloadUrl = query({
   args: { clientId: v.id("clients") },
   handler: async (ctx, args) => {
-    await requireAuth(ctx);
+    const workspaceId = await requireAuth(ctx);
     const client = await ctx.db.get(args.clientId);
+    assertWorkspace(client, workspaceId);
     if (!client?.packetStorageId) return null;
     return await ctx.storage.getUrl(client.packetStorageId);
   },
@@ -34,10 +45,15 @@ export const getPacketDownloadUrl = query({
 export const updateClientStatus = mutation({
   args: {
     clientId: v.id("clients"),
-    status: v.union(v.literal("unsigned"), v.literal("signed"), v.literal("complete")),
+    status: v.union(
+      v.literal("unsigned"),
+      v.literal("signed"),
+      v.literal("complete"),
+    ),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx);
+    const workspaceId = await requireAuth(ctx);
+    assertWorkspace(await ctx.db.get(args.clientId), workspaceId);
     await ctx.db.patch(args.clientId, {
       status: args.status,
       updatedAt: Date.now(),
@@ -52,10 +68,15 @@ export const setPacketStorageId = mutation({
     dirty: v.boolean(),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx);
+    const workspaceId = await requireAuth(ctx);
+    await requireFile(ctx, args.packetStorageId, workspaceId);
     const client = await ctx.db.get(args.clientId);
+    assertWorkspace(client, workspaceId);
     if (!client) throw new Error("Client not found");
-    if (client.packetStorageId && client.packetStorageId !== args.packetStorageId) {
+    if (
+      client.packetStorageId &&
+      client.packetStorageId !== args.packetStorageId
+    ) {
       await ctx.storage.delete(client.packetStorageId);
     }
     await ctx.db.patch(args.clientId, {
@@ -69,15 +90,18 @@ export const setPacketStorageId = mutation({
 export const deleteClient = mutation({
   args: { clientId: v.id("clients") },
   handler: async (ctx, args) => {
-    await requireAuth(ctx);
+    const workspaceId = await requireAuth(ctx);
     const client = await ctx.db.get(args.clientId);
+    assertWorkspace(client, workspaceId);
     if (!client) return;
     if (client.packetStorageId) {
       await ctx.storage.delete(client.packetStorageId);
     }
     const files = await ctx.db
       .query("clientFiles")
-      .withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+      .withIndex("by_workspaceId_and_clientId", (q) =>
+        q.eq("workspaceId", workspaceId).eq("clientId", args.clientId),
+      )
       .take(200);
     for (const file of files) {
       await ctx.storage.delete(file.storageId);
@@ -104,15 +128,18 @@ export const createClient = mutation({
     packetStorageId: v.id("_storage"),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx);
+    const workspaceId = await requireAuth(ctx);
+    await requireFile(ctx, args.packetStorageId, workspaceId);
     const now = Date.now();
     const clientId = await ctx.db.insert("clients", {
+      workspaceId,
       ...args,
       status: "unsigned",
       createdAt: now,
       updatedAt: now,
     });
     await syncSource(ctx, {
+      workspaceId,
       sourceType: "client",
       sourceId: clientId,
       observedAt: now,

@@ -6,8 +6,11 @@ import { requireAuth } from "./lib/auth";
 export const getSettings = query({
   args: {},
   handler: async (ctx) => {
-    await requireAuth(ctx);
-    return await ctx.db.query("settings").first();
+    const workspaceId = await requireAuth(ctx);
+    return await ctx.db
+      .query("settings")
+      .withIndex("by_workspaceId", (q) => q.eq("workspaceId", workspaceId))
+      .first();
   },
 });
 
@@ -24,12 +27,15 @@ export const updateSettings = mutation({
     contractorLicense: v.string(),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx);
-    const existing = await ctx.db.query("settings").first();
+    const workspaceId = await requireAuth(ctx);
+    const existing = await ctx.db
+      .query("settings")
+      .withIndex("by_workspaceId", (q) => q.eq("workspaceId", workspaceId))
+      .first();
     if (existing) {
-      await ctx.db.replace(existing._id, args);
+      await ctx.db.replace(existing._id, { ...args, workspaceId });
       return existing._id;
     }
-    return await ctx.db.insert("settings", args);
+    return await ctx.db.insert("settings", { ...args, workspaceId });
   },
 });

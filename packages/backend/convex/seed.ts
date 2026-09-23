@@ -2,24 +2,82 @@ import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 
 const FIRST_NAMES = [
-  "James", "Mary", "Robert", "Patricia", "John", "Jennifer", "Michael",
-  "Linda", "David", "Elizabeth", "William", "Barbara", "Richard", "Susan",
-  "Joseph", "Jessica", "Thomas", "Sarah", "Charles", "Karen", "Christopher",
-  "Lisa", "Daniel", "Nancy", "Matthew", "Betty", "Anthony", "Margaret",
-  "Mark", "Sandra",
+  "James",
+  "Mary",
+  "Robert",
+  "Patricia",
+  "John",
+  "Jennifer",
+  "Michael",
+  "Linda",
+  "David",
+  "Elizabeth",
+  "William",
+  "Barbara",
+  "Richard",
+  "Susan",
+  "Joseph",
+  "Jessica",
+  "Thomas",
+  "Sarah",
+  "Charles",
+  "Karen",
+  "Christopher",
+  "Lisa",
+  "Daniel",
+  "Nancy",
+  "Matthew",
+  "Betty",
+  "Anthony",
+  "Margaret",
+  "Mark",
+  "Sandra",
 ];
 
 const LAST_NAMES = [
-  "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller",
-  "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez",
-  "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
-  "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark",
-  "Ramirez", "Lewis", "Robinson",
+  "Smith",
+  "Johnson",
+  "Williams",
+  "Brown",
+  "Jones",
+  "Garcia",
+  "Miller",
+  "Davis",
+  "Rodriguez",
+  "Martinez",
+  "Hernandez",
+  "Lopez",
+  "Gonzalez",
+  "Wilson",
+  "Anderson",
+  "Thomas",
+  "Taylor",
+  "Moore",
+  "Jackson",
+  "Martin",
+  "Lee",
+  "Perez",
+  "Thompson",
+  "White",
+  "Harris",
+  "Sanchez",
+  "Clark",
+  "Ramirez",
+  "Lewis",
+  "Robinson",
 ];
 
 const STREETS = [
-  "Oakwood Dr", "Maple Ave", "Cedar Ln", "Pine St", "Elm Ct", "Willow Way",
-  "Birch Rd", "Magnolia Blvd", "Hickory Trl", "Dogwood Cir",
+  "Oakwood Dr",
+  "Maple Ave",
+  "Cedar Ln",
+  "Pine St",
+  "Elm Ct",
+  "Willow Way",
+  "Birch Rd",
+  "Magnolia Blvd",
+  "Hickory Trl",
+  "Dogwood Cir",
 ];
 
 const CITIES: Array<[string, string, string]> = [
@@ -67,10 +125,16 @@ function mulberry32(seed: number) {
 }
 
 export const seedInvoices = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const clients = await ctx.db.query("clients").collect();
-    const existing = await ctx.db.query("invoices").collect();
+  args: { workspaceId: v.optional(v.id("workspaces")) },
+  handler: async (ctx, args) => {
+    const clients = await ctx.db
+      .query("clients")
+      .withIndex("by_workspaceId", (q) => q.eq("workspaceId", args.workspaceId))
+      .take(500);
+    const existing = await ctx.db
+      .query("invoices")
+      .withIndex("by_workspaceId", (q) => q.eq("workspaceId", args.workspaceId))
+      .take(1000);
     const existingNumbers = new Set(existing.map((inv) => inv.invoiceNumber));
 
     let inserted = 0;
@@ -78,6 +142,7 @@ export const seedInvoices = internalMutation({
       if (existingNumbers.has(client.invoiceNumber)) continue;
       const invoiceDate = new Date(client.createdAt).toISOString().slice(0, 10);
       await ctx.db.insert("invoices", {
+        workspaceId: args.workspaceId,
         name: client.name,
         street: client.street,
         city: client.city,
@@ -131,7 +196,9 @@ export const seedMockData = internalMutation({
 
       const [city, state, zip] = pick(CITIES);
       const createdAt =
-        Date.now() - randInt(0, 90) * 24 * 60 * 60 * 1000 - randInt(0, 86_400_000);
+        Date.now() -
+        randInt(0, 90) * 24 * 60 * 60 * 1000 -
+        randInt(0, 86_400_000);
 
       const id = await ctx.db.insert("clients", {
         name: `${FIRST_NAMES[i % FIRST_NAMES.length]} ${LAST_NAMES[(i * 7) % LAST_NAMES.length]}`,
@@ -141,7 +208,8 @@ export const seedMockData = internalMutation({
         zip,
         phone: `(${randInt(205, 931)}) ${randInt(200, 999)}-${String(randInt(0, 9999)).padStart(4, "0")}`,
         invoiceNumber: `INV-${String(1000 + i)}`,
-        caseNumber: rand() < 0.7 ? `48-48-6-${randInt(100000, 999999)}` : undefined,
+        caseNumber:
+          rand() < 0.7 ? `48-48-6-${randInt(100000, 999999)}` : undefined,
         drawCount: pick([...drawCounts]),
         lineItems,
         subtotal: total,

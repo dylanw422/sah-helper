@@ -4,6 +4,8 @@ import { Button } from "@sah-helper/ui/components/button";
 import { FileTextIcon, SettingsIcon } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
+import { api } from "@sah-helper/backend/convex/_generated/api";
+import { useQuery } from "convex/react";
 
 import { useScrollOpacity } from "@/hooks/use-scroll-opacity";
 
@@ -11,6 +13,7 @@ import UserMenu from "./user-menu";
 
 export default function Header() {
   const scrollOpacity = useScrollOpacity();
+  const workspace = useQuery(api.workspaces.current);
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-surface-base/85 backdrop-blur-xl backdrop-saturate-150">
@@ -27,7 +30,14 @@ export default function Header() {
           >
             <FileTextIcon className="size-4 text-white" />
           </motion.div>
-          <span className="text-[13px] font-semibold tracking-[-0.01em]">SAH Helper</span>
+          <span className="text-[13px] font-semibold tracking-[-0.01em]">
+            SAH Helper
+          </span>
+          {workspace ? (
+            <span className="hidden max-w-56 truncate border-l pl-3 text-xs text-muted-foreground sm:block">
+              {workspace.name}
+            </span>
+          ) : null}
         </Link>
 
         <div className="flex items-center gap-1.5">

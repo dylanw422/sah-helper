@@ -21,6 +21,7 @@ import type * as invoices from "../invoices.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_constructionStageCompletionPdf from "../lib/constructionStageCompletionPdf.js";
 import type * as lib_drawSchedule from "../lib/drawSchedule.js";
+import type * as lib_files from "../lib/files.js";
 import type * as lib_grant from "../lib/grant.js";
 import type * as lib_invoicePdf from "../lib/invoicePdf.js";
 import type * as lib_pdf from "../lib/pdf.js";
@@ -28,6 +29,7 @@ import type * as lib_pdfFieldMap from "../lib/pdfFieldMap.js";
 import type * as lib_scopeOfWorkPdf from "../lib/scopeOfWorkPdf.js";
 import type * as lib_templateKeys from "../lib/templateKeys.js";
 import type * as lib_templateNames from "../lib/templateNames.js";
+import type * as lib_workspaces from "../lib/workspaces.js";
 import type * as packets from "../packets.js";
 import type * as privateData from "../privateData.js";
 import type * as scopeOfWork from "../scopeOfWork.js";
@@ -37,6 +39,7 @@ import type * as templateMapping from "../templateMapping.js";
 import type * as templates from "../templates.js";
 import type * as uploads from "../uploads.js";
 import type * as users from "../users.js";
+import type * as workspaces from "../workspaces.js";
 
 import type {
   ApiFromModules,
@@ -58,6 +61,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/constructionStageCompletionPdf": typeof lib_constructionStageCompletionPdf;
   "lib/drawSchedule": typeof lib_drawSchedule;
+  "lib/files": typeof lib_files;
   "lib/grant": typeof lib_grant;
   "lib/invoicePdf": typeof lib_invoicePdf;
   "lib/pdf": typeof lib_pdf;
@@ -65,6 +69,7 @@ declare const fullApi: ApiFromModules<{
   "lib/scopeOfWorkPdf": typeof lib_scopeOfWorkPdf;
   "lib/templateKeys": typeof lib_templateKeys;
   "lib/templateNames": typeof lib_templateNames;
+  "lib/workspaces": typeof lib_workspaces;
   packets: typeof packets;
   privateData: typeof privateData;
   scopeOfWork: typeof scopeOfWork;
@@ -74,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   templates: typeof templates;
   uploads: typeof uploads;
   users: typeof users;
+  workspaces: typeof workspaces;
 }>;
 
 /**
