@@ -5,7 +5,7 @@ import type { Doc, Id } from "@sah-helper/backend/convex/_generated/dataModel";
 import { Button, buttonVariants } from "@sah-helper/ui/components/button";
 import { Skeleton } from "@sah-helper/ui/components/skeleton";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { DownloadIcon, FileTextIcon, PencilIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react";
+import { DownloadIcon, FileTextIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -26,11 +26,18 @@ export default function SavedInvoicesPage() {
   const [searchInput, setSearchInput] = useState("");
 
   const search = searchInput.trim().toLowerCase();
-  const filteredInvoices = (invoices ?? []).filter(
-    (invoice) =>
-      !search ||
-      invoice.invoiceNumber.toLowerCase().includes(search) ||
-      invoice.name.toLowerCase().includes(search),
+  const filteredInvoices = (invoices ?? []).filter((invoice) =>
+    !search ||
+    [
+      invoice.invoiceNumber,
+      invoice.name,
+      invoice.caseNumber,
+      invoice.street,
+      invoice.city,
+      invoice.state,
+      invoice.zip,
+      `${invoice.street}, ${invoice.city}, ${invoice.state} ${invoice.zip}`,
+    ].some((value) => value.toLowerCase().includes(search)),
   );
 
   const handleDelete = async () => {
@@ -109,7 +116,8 @@ export default function SavedInvoicesPage() {
               type="text"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Search by client name or invoice #"
+              placeholder="Search invoices"
+              aria-label="Search invoices by client name, address, case number, or invoice number"
               className="h-9 w-full rounded-md border border-border bg-card pr-3 pl-9 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-ring"
             />
           </div>
@@ -147,10 +155,11 @@ export default function SavedInvoicesPage() {
                   <Button
                     variant="outline"
                     size="sm"
+                    aria-label={`Generate packet from invoice ${invoice.invoiceNumber}`}
                     onClick={() => router.push(`/invoice-builder?id=${invoice._id}`)}
                   >
-                    <PencilIcon className="size-3.5" />
-                    <span className="hidden sm:inline">Edit</span>
+                    <FileTextIcon className="size-3.5" />
+                    <span className="hidden sm:inline">Generate</span>
                   </Button>
                   <Button
                     variant="outline"

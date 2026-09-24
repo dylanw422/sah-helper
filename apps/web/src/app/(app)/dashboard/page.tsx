@@ -7,10 +7,10 @@ import { Input } from "@sah-helper/ui/components/input";
 import { useQuery } from "convex/react";
 import {
   AlertTriangleIcon,
+  ArrowUpRightIcon,
   ChevronRightIcon,
   DownloadIcon,
   FolderOpenIcon,
-  PlusIcon,
   ReceiptIcon,
   SearchIcon,
   SearchXIcon,
@@ -102,20 +102,18 @@ export default function DashboardPage() {
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold tracking-[-0.025em]">Clients</h1>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Link href="/invoices">
-            <Button
-              size="lg"
-              className="w-full bg-emerald-600 text-white hover:bg-emerald-700 hover:shadow-[0_0_0_1px_rgb(16_185_129/0.5),0_4px_16px_-4px_rgb(16_185_129/0.6)] sm:w-auto"
-            >
-              <ReceiptIcon data-icon="inline-start" />
-              Invoices
-            </Button>
-          </Link>
-          <Link href="/new-packet">
-            <Button size="lg" className="w-full sm:w-auto">
-              <PlusIcon data-icon="inline-start" />
-              New Packet
-            </Button>
+          <Link
+            href="/invoices"
+            className="group inline-flex min-h-12 w-full items-center gap-3 rounded-lg border border-indigo-400/30 bg-primary px-3 py-2 text-primary-foreground shadow-[0_8px_24px_-12px_rgb(79_70_229/0.75)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_rgb(79_70_229/0.8)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-0 sm:w-auto"
+          >
+            <span className="flex size-8 items-center justify-center rounded-md border border-white/15 bg-white/15">
+              <ReceiptIcon className="size-4" aria-hidden="true" />
+            </span>
+            <span className="flex flex-col leading-tight">
+              <span className="text-sm font-semibold tracking-[-0.015em]">Invoices</span>
+              <span className="text-[10px] text-white/75">Create &amp; manage</span>
+            </span>
+            <ArrowUpRightIcon className="ml-3 size-4 text-white/75 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" aria-hidden="true" />
           </Link>
         </div>
       </div>
@@ -410,15 +408,9 @@ function EmptyState({ hasClients, onClear }: { hasClients: boolean; onClear: () 
       ) : (
         <>
           <p className="mb-1 text-sm font-medium">No clients yet</p>
-          <p className="mb-5 text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Upload your first invoice to get started.
           </p>
-          <Link href="/new-packet">
-            <Button>
-              <PlusIcon data-icon="inline-start" />
-              New Packet
-            </Button>
-          </Link>
         </>
       )}
     </motion.div>
