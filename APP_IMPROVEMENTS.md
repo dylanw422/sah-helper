@@ -22,10 +22,14 @@ Suggested improvements based on the current dashboard, invoice builder, packet w
 
 10. **Show actual generation progress and support retries.** The wizard uses timed progress indicators in places. Track real processing stages and let users retry failures while keeping their verified data.
 
-11. **Replace the catalog with reusable job bundles.** Save manually priced groups of line items and attachments—for example, a bathroom modification package—and add them to invoices. Remove the unused AI invoice-generation and learned-pricing catalog workflows. See [the detailed feature specification](FEATURE_JOB_BUNDLES.md).
+11. **Add reusable job bundles.** Extend the catalog with commonly used groups of line items and attachments—for example, a bathroom modification package.
 
 12. **Add client notes and follow-up dates.** Keep conversations, next steps, and reminders with the client record so the app supports the work between document generation and completion.
 
 ## Recommended Starting Point
 
 Start with **packet draft recovery, side-by-side verification, and the readiness checklist**. They directly reduce lost work and document errors in the core workflow.
+
+MY IDEAS
+
+1. Add addtional files before downloading after generating a packet

@@ -2,18 +2,21 @@
 
 import { api } from "@sah-helper/backend/convex/_generated/api";
 import type { Doc } from "@sah-helper/backend/convex/_generated/dataModel";
-import { Button } from "@sah-helper/ui/components/button";
+import { Button, buttonVariants } from "@sah-helper/ui/components/button";
 import { Input } from "@sah-helper/ui/components/input";
 import { useQuery } from "convex/react";
 import {
   AlertTriangleIcon,
   ArrowUpRightIcon,
   ChevronRightIcon,
+  CircleCheckIcon,
   DownloadIcon,
   FolderOpenIcon,
   ReceiptIcon,
   SearchIcon,
   SearchXIcon,
+  UsersRoundIcon,
+  WalletIcon,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
@@ -74,97 +77,118 @@ export default function DashboardPage() {
     });
   }, [clients, filter, search]);
 
-  const cycleFilter = (dir: 1 | -1) => {
-    const idx = FILTERS.findIndex((f) => f.key === filter);
-    const next = FILTERS[(idx + dir + FILTERS.length) % FILTERS.length];
-    if (next) setFilter(next.key);
-  };
-
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-8">
+    <div className="mx-auto w-full max-w-6xl px-4 pb-12 pt-7 sm:pt-10">
       {settings === null && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-6 flex items-center gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-600 dark:text-amber-400"
+          className="mb-7 flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-300"
         >
           <AlertTriangleIcon className="size-4 shrink-0" />
           <span>
             Contractor information is not configured. Packets cannot be generated until settings are
             complete.
           </span>
-          <Link href="/settings" className="ml-auto shrink-0 font-medium underline">
+          <Link href="/settings" className="ml-auto shrink-0 font-semibold underline underline-offset-4 hover:no-underline">
             Configure Settings
           </Link>
         </motion.div>
       )}
 
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold tracking-[-0.025em]">Clients</h1>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Link
-            href="/invoices"
-            className="group inline-flex min-h-12 w-full items-center gap-3 rounded-lg border border-indigo-400/30 bg-primary px-3 py-2 text-primary-foreground shadow-[0_8px_24px_-12px_rgb(79_70_229/0.75)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_rgb(79_70_229/0.8)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-0 sm:w-auto"
-          >
-            <span className="flex size-8 items-center justify-center rounded-md border border-white/15 bg-white/15">
-              <ReceiptIcon className="size-4" aria-hidden="true" />
-            </span>
-            <span className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold tracking-[-0.015em]">Invoices</span>
-              <span className="text-[10px] text-white/75">Create &amp; manage</span>
-            </span>
-            <ArrowUpRightIcon className="ml-3 size-4 text-white/75 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" aria-hidden="true" />
-          </Link>
+      <div className="mb-7 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="mb-2 text-[10px] font-semibold tracking-[0.16em] text-indigo-600 uppercase dark:text-indigo-400">
+            Workspace overview
+          </p>
+          <h1 className="text-3xl font-semibold tracking-[-0.045em] sm:text-[34px]">Clients</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Track packets, documents, and progress in one place.
+          </p>
         </div>
+        <Link
+          href="/invoices"
+          className="group inline-flex min-h-12 w-full items-center gap-3 rounded-lg border border-indigo-400/30 bg-primary px-3 py-2 text-primary-foreground shadow-[0_8px_24px_-12px_rgb(79_70_229/0.75)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_rgb(79_70_229/0.8)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-0 sm:w-auto"
+        >
+          <span className="flex size-8 items-center justify-center rounded-md border border-white/15 bg-white/15">
+            <ReceiptIcon className="size-4" aria-hidden="true" />
+          </span>
+          <span className="flex flex-1 flex-col leading-tight sm:flex-none">
+            <span className="text-sm font-semibold tracking-[-0.015em]">Invoices</span>
+            <span className="text-[10px] text-white/75">Create &amp; manage</span>
+          </span>
+          <ArrowUpRightIcon className="ml-3 size-4 text-white/75 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" aria-hidden="true" />
+        </Link>
       </div>
 
       <motion.div
         variants={stagger(0.06)}
         initial="hidden"
         animate="visible"
-        className="mb-6 grid grid-cols-3 gap-3 sm:gap-4"
+        className="mb-10 grid gap-3 sm:grid-cols-3 sm:gap-4"
       >
-        {[
-          { label: "Total Clients", value: clients === undefined ? "—" : String(counts.all) },
-          { label: "Total Value", value: clients === undefined ? "—" : formatCurrency(totalValue) },
-          { label: "Completed", value: clients === undefined ? "—" : `${completionPct}%` },
-        ].map(({ label, value }) => (
-          <motion.div
-            key={label}
-            variants={fadeUp}
-            className="rounded-md border border-border bg-card px-4 py-3"
-          >
-            <p className="mb-1 text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground/70">
-              {label}
-            </p>
-            <p className="font-mono text-xl font-semibold tabular-nums">{value}</p>
-          </motion.div>
-        ))}
+        <motion.div variants={fadeUp} className="rounded-lg border border-border bg-card p-5 shadow-sm">
+          <div className="mb-5 flex items-start justify-between">
+            <p className="text-[11px] font-medium tracking-[0.1em] text-muted-foreground uppercase">Total clients</p>
+            <span className="flex size-9 items-center justify-center rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400"><UsersRoundIcon className="size-4" /></span>
+          </div>
+          <p className="font-mono text-3xl font-semibold tracking-[-0.06em] tabular-nums">{clients === undefined ? "—" : counts.all}</p>
+          <p className="mt-2 text-xs text-muted-foreground">In your workspace</p>
+        </motion.div>
+        <motion.div variants={fadeUp} className="rounded-lg border border-border bg-card p-5 shadow-sm">
+          <div className="mb-5 flex items-start justify-between">
+            <p className="text-[11px] font-medium tracking-[0.1em] text-muted-foreground uppercase">Total value</p>
+            <span className="flex size-9 items-center justify-center rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400"><WalletIcon className="size-4" /></span>
+          </div>
+          <p className="font-mono text-[clamp(1.25rem,2.3vw,1.875rem)] font-semibold tracking-[-0.06em] tabular-nums">{clients === undefined ? "—" : formatCurrency(totalValue)}</p>
+          <p className="mt-2 text-xs text-muted-foreground">Across all client packets</p>
+        </motion.div>
+        <motion.div variants={fadeUp} className="rounded-lg border border-border bg-card p-5 shadow-sm">
+          <div className="mb-5 flex items-start justify-between">
+            <p className="text-[11px] font-medium tracking-[0.1em] text-muted-foreground uppercase">Completed</p>
+            <span className="flex size-9 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"><CircleCheckIcon className="size-4" /></span>
+          </div>
+          <p className="font-mono text-3xl font-semibold tracking-[-0.06em] tabular-nums">{clients === undefined ? "—" : `${completionPct}%`}</p>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-emerald-500/10">
+            <div className="h-full rounded-full bg-emerald-500 transition-[width] duration-500" style={{ width: `${completionPct}%` }} />
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">{clients === undefined ? "Loading clients" : `${counts.complete} of ${counts.all} clients`}</p>
+        </motion.div>
       </motion.div>
 
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div
-          className="flex w-fit items-center rounded-md border border-border bg-card p-0.5"
-          role="tablist"
-          aria-label="Filter clients by status"
-          onKeyDown={(e) => {
-            if (e.key === "ArrowRight") cycleFilter(1);
-            if (e.key === "ArrowLeft") cycleFilter(-1);
-          }}
-        >
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold tracking-[-0.03em]">Client directory</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {clients === undefined ? "Loading clients" : `Showing ${filtered.length} of ${counts.all} clients`}
+          </p>
+        </div>
+        <div className="relative w-full sm:w-72">
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search clients"
+            aria-label="Search clients by name, address, or case number"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-10 rounded-lg bg-card pl-10"
+          />
+        </div>
+      </div>
+
+      <div className="mb-4 overflow-x-auto rounded-lg border border-border bg-card p-1">
+        <div className="flex min-w-max items-center gap-1" role="group" aria-label="Filter clients by status">
           {FILTERS.map(({ key, label }) => (
             <button
               key={key}
               type="button"
-              role="tab"
-              aria-selected={filter === key}
+              aria-pressed={filter === key}
               onClick={() => setFilter(key)}
-              className="relative rounded-sm px-3 py-1.5 text-xs font-medium transition-colors"
+              className="relative rounded-md px-3 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             >
               {filter === key && (
                 <motion.span
                   layoutId="filter-indicator"
-                  className="absolute inset-0 rounded-sm bg-primary"
+                  className="absolute inset-0 rounded-md bg-primary"
                   transition={{ type: "spring", stiffness: 500, damping: 42 }}
                 />
               )}
@@ -184,16 +208,6 @@ export default function DashboardPage() {
               </span>
             </button>
           ))}
-        </div>
-        <div className="relative w-full sm:w-64">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search clients"
-            aria-label="Search clients by name, address, or case number"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-8"
-          />
         </div>
       </div>
 
@@ -251,47 +265,41 @@ function ClientRow({ client }: { client: Doc<"clients"> }) {
   };
 
   return (
-    <div className="group relative rounded-md border border-border bg-card transition-all duration-200 hover:border-[rgb(var(--border-default-rgb)/var(--border-hover-alpha))] hover:bg-surface-overlay hover:shadow-[0_8px_32px_-8px_rgb(0_0_0/0.4)]">
+    <div className="group relative overflow-hidden rounded-lg border border-border bg-card transition-colors duration-200 hover:border-foreground/20 hover:bg-surface-overlay focus-within:border-foreground/20">
       <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        aria-label={`Toggle files for ${client.name}`}
         onClick={toggle}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            toggle();
-          }
-        }}
-        className="flex cursor-pointer items-center gap-4 px-4 py-3.5"
+        className="flex cursor-pointer items-center gap-2 px-4 py-4 sm:gap-4 sm:px-5"
       >
         <div
-          className={`absolute top-3 bottom-3 left-0 w-0.5 rounded-full ${STATUS_BAR_COLOR[status]}`}
+          className={`absolute inset-y-0 left-0 w-1 ${STATUS_BAR_COLOR[status]}`}
         />
 
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-sm bg-accent font-mono text-[11px] font-semibold tracking-tight text-indigo-600 dark:text-indigo-400">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-accent font-mono text-[11px] font-semibold tracking-tight text-indigo-600 sm:size-10 dark:text-indigo-400">
           {initials(client.name)}
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="mb-0.5 flex items-center gap-2">
+          <div className="mb-1 flex min-w-0 flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
             <Link
               href={`/clients/${client._id}`}
               onClick={(e) => e.stopPropagation()}
-              className="min-w-0 truncate underline-offset-4 hover:underline"
+              className="min-w-0 max-w-full truncate rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <motion.span
                 layoutId={`client-name-${client._id}`}
-                className="truncate text-[14px] font-semibold"
+                className="block truncate text-[14px] font-semibold tracking-[-0.01em]"
               >
                 {client.name}
               </motion.span>
             </Link>
             <StatusBadge status={status} />
           </div>
-          <p className="truncate text-xs text-muted-foreground/70">
+          <p className="truncate text-xs text-muted-foreground">
             {client.street}, {client.city}, {client.state} {client.zip}
+            {client.caseNumber && <span className="hidden md:inline"> · Case {client.caseNumber}</span>}
+          </p>
+          <p className="mt-1.5 font-mono text-xs font-medium tabular-nums sm:hidden">
+            {formatCurrency(client.total)} <span className="font-sans font-normal text-muted-foreground">· {client.drawCount} draws</span>
           </p>
         </div>
 
@@ -300,10 +308,10 @@ function ClientRow({ client }: { client: Doc<"clients"> }) {
             <p className="font-mono text-[14px] font-semibold tabular-nums">
               {formatCurrency(client.total)}
             </p>
-            <p className="text-[11px] text-muted-foreground/70">{client.drawCount} draws</p>
+            <p className="text-[11px] text-muted-foreground">{client.drawCount} draws</p>
           </div>
-          <div>
-            <p className="text-[11px] text-muted-foreground/70">Created</p>
+          <div className="hidden lg:block">
+            <p className="text-[11px] text-muted-foreground">Created</p>
             <p className="font-mono text-[11px] text-muted-foreground">
               {formatDate(client.createdAt)}
             </p>
@@ -312,7 +320,8 @@ function ClientRow({ client }: { client: Doc<"clients"> }) {
 
         <Button
           variant="outline"
-          size="sm"
+          size="icon-lg"
+          aria-label={`Download packet for ${client.name}`}
           disabled={!client.packetStorageId || downloading}
           onClick={(e) => {
             e.stopPropagation();
@@ -323,20 +332,23 @@ function ClientRow({ client }: { client: Doc<"clients"> }) {
               ? "New files added — packet will be rebuilt on download."
               : "Download Packet.pdf"
           }
-          className="relative shrink-0"
+          className="relative shrink-0 rounded-md"
         >
-          <DownloadIcon className="size-3.5" />
-          <span className="hidden md:inline">{downloading ? "Downloading..." : "Download"}</span>
+          <DownloadIcon className="size-4" />
           {client.packetDirty && (
             <span className="absolute -top-1 -right-1 size-2 rounded-full bg-amber-400" />
           )}
         </Button>
 
-        <ChevronRightIcon
-          className={`size-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
-            expanded ? "rotate-90" : ""
-          }`}
-        />
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "Hide" : "Show"} files for ${client.name}`}
+          onClick={(e) => { e.stopPropagation(); toggle(); }}
+          className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronRightIcon className={`size-4 transition-transform duration-200 ${expanded ? "rotate-90" : ""}`} />
+        </button>
       </div>
 
       <AnimatePresence initial={false}>
@@ -348,7 +360,7 @@ function ClientRow({ client }: { client: Doc<"clients"> }) {
             transition={{ duration: 0.2, ease: "easeOut" }}
             className="overflow-hidden"
           >
-            <div className="border-t border-border px-4 py-4">
+            <div className="border-t border-border bg-surface-sunken/40 px-4 py-4 sm:px-5">
               <ClientFileList clientId={client._id} files={files} />
             </div>
           </motion.div>
@@ -360,9 +372,9 @@ function ClientRow({ client }: { client: Doc<"clients"> }) {
 
 function ClientRowSkeleton() {
   return (
-    <div className="relative flex items-center gap-4 rounded-md border border-border bg-card px-4 py-3.5">
-      <div className="absolute top-3 bottom-3 left-0 w-0.5 rounded-full bg-muted" />
-      <div className="skeleton-shimmer size-9 shrink-0 rounded-sm" />
+    <div className="relative flex items-center gap-4 rounded-lg border border-border bg-card px-4 py-4 sm:px-5">
+      <div className="absolute inset-y-0 left-0 w-1 bg-muted" />
+      <div className="skeleton-shimmer size-9 shrink-0 rounded-md sm:size-10" />
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex items-center gap-2">
           <div className="skeleton-shimmer h-4 w-36 rounded-sm" />
@@ -390,14 +402,14 @@ function EmptyState({ hasClients, onClear }: { hasClients: boolean; onClear: () 
       variants={fadeUp}
       initial="hidden"
       animate="visible"
-      className="flex flex-col items-center justify-center rounded-md border border-dashed border-border py-20 text-center"
+      className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/60 px-5 py-16 text-center"
     >
-      <div className="mb-4 flex size-14 items-center justify-center rounded-md bg-accent text-indigo-600 dark:text-indigo-400">
+      <div className="mb-4 flex size-14 items-center justify-center rounded-lg bg-accent text-indigo-600 dark:text-indigo-400">
         {hasClients ? <SearchXIcon className="size-7" /> : <FolderOpenIcon className="size-7" />}
       </div>
       {hasClients ? (
         <>
-          <p className="mb-1 text-sm font-medium">No clients match your filters</p>
+          <p className="mb-1 text-base font-semibold">No clients match your filters</p>
           <p className="mb-5 text-xs text-muted-foreground">
             Try a different status or clear your search.
           </p>
@@ -407,10 +419,13 @@ function EmptyState({ hasClients, onClear }: { hasClients: boolean; onClear: () 
         </>
       ) : (
         <>
-          <p className="mb-1 text-sm font-medium">No clients yet</p>
-          <p className="text-xs text-muted-foreground">
-            Upload your first invoice to get started.
+          <p className="mb-1 text-base font-semibold">No clients yet</p>
+          <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
+            Create an invoice and start a packet to see your clients here.
           </p>
+          <Link href="/invoices" className={buttonVariants({ variant: "outline", className: "mt-5" })}>
+            View invoices <ArrowUpRightIcon className="size-3.5" />
+          </Link>
         </>
       )}
     </motion.div>
