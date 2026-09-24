@@ -13,9 +13,12 @@ import {
   BookOpenIcon,
   BuildingIcon,
   DownloadIcon,
+  FileTextIcon,
   FilesIcon,
+  ListChecksIcon,
   SettingsIcon,
   PlusIcon,
+  UserRoundIcon,
 } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
@@ -77,15 +80,23 @@ const CLIENT_FIELDS = [
   { key: "phone", label: "Phone Number" },
 ] as const;
 
+const SECTION_CARD_CLASS = "gap-0 rounded-lg py-0";
+const SECTION_HEADER_CLASS = "border-b border-border px-5 py-4";
+const SECTION_CONTENT_CLASS = "px-5 py-5";
+
 function BuilderSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-8">
-      <Skeleton className="mb-2 h-6 w-48" />
-      <Skeleton className="mb-8 h-3 w-72" />
-      <div className="space-y-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-32 w-full" />
-        ))}
+    <div className="mx-auto w-full max-w-6xl px-4 pb-12 pt-7 sm:pt-10">
+      <Skeleton className="mb-3 h-3 w-32" />
+      <Skeleton className="mb-2 h-9 w-56" />
+      <Skeleton className="mb-8 h-4 w-80 max-w-full" />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="space-y-5">
+          <Skeleton className="h-40 w-full rounded-lg" />
+          <Skeleton className="h-72 w-full rounded-lg" />
+          <Skeleton className="h-48 w-full rounded-lg" />
+        </div>
+        <Skeleton className="h-80 w-full rounded-lg" />
       </div>
     </div>
   );
@@ -426,18 +437,20 @@ function InvoiceBuilder() {
 
   if (settings === null) {
     return (
-      <div className="mx-auto flex w-full max-w-md flex-col items-center px-4 pt-24 text-center">
-        <div className="mb-4 flex size-12 items-center justify-center rounded-md bg-accent text-indigo-600 dark:text-indigo-400">
-          <SettingsIcon className="size-6" />
+      <div className="mx-auto w-full max-w-6xl px-4 pb-12 pt-7 sm:pt-10">
+        <div className="mx-auto mt-12 flex max-w-lg flex-col items-center rounded-lg border border-dashed border-border bg-card/60 px-6 py-16 text-center">
+          <div className="mb-4 flex size-14 items-center justify-center rounded-lg bg-accent text-indigo-600 dark:text-indigo-400">
+            <SettingsIcon className="size-7" />
+          </div>
+          <h1 className="mb-2 text-base font-semibold">Contractor settings are not configured</h1>
+          <p className="mb-6 max-w-sm text-xs leading-relaxed text-muted-foreground">
+            Visit Settings before building invoices. Your contractor information fills the
+            &ldquo;From&rdquo; section of every invoice.
+          </p>
+          <Link href="/settings" className={buttonVariants({ className: "h-10 rounded-md px-4" })}>
+            Go to settings
+          </Link>
         </div>
-        <h1 className="mb-2 text-lg font-semibold">Contractor settings are not configured</h1>
-        <p className="mb-6 text-xs text-muted-foreground">
-          Visit Settings before building invoices. Your contractor information fills the
-          &ldquo;From&rdquo; section of every invoice.
-        </p>
-        <Link href="/settings" className={buttonVariants({})}>
-          Go to Settings
-        </Link>
       </div>
     );
   }
@@ -446,47 +459,61 @@ function InvoiceBuilder() {
     regularRows.filter((row) => row.description.trim() !== "" || lineItemRowAmount(row) > 0)
       .length + 1; // +1 for profit row
 
+  const saveStatus = saving ? "Saving..." : dirty ? "Unsaved changes" : invoiceId ? "Saved" : "New draft";
+
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-8">
-      <div className="mb-6 flex items-end justify-between gap-4">
+    <div className="mx-auto w-full max-w-6xl px-4 pb-12 pt-7 sm:pt-10">
+      <div className="mb-7 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="mb-1 text-xl font-semibold tracking-[-0.025em]">Invoice Builder</h1>
-          <p className="text-xs text-muted-foreground">
-            {invoiceId
-              ? `Editing ${fields.invoiceNumber || "saved invoice"} — saving updates this invoice.`
-              : "Compose a new invoice. Drag line items to set construction order."}
+          <p className="mb-2 text-[10px] font-semibold tracking-[0.16em] text-indigo-600 uppercase dark:text-indigo-400">
+            Invoice workspace
           </p>
+          <h1 className="text-3xl font-semibold tracking-[-0.045em] sm:text-[34px]">Invoice builder</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            {invoiceId
+              ? `Editing invoice ${fields.invoiceNumber || "saved invoice"}. Changes save automatically.`
+              : "Add client details and line items, then start a packet."}
+          </p>
+          <span className={`mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${saving || dirty ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : invoiceId ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>
+            <span className={`size-1.5 rounded-full ${saving || dirty ? "bg-amber-500" : invoiceId ? "bg-emerald-500" : "bg-muted-foreground"}`} />
+            {saveStatus}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
-          <Link href="/bundles" className={buttonVariants({ variant: "outline", size: "lg" })}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/invoices" className={buttonVariants({ variant: "outline", className: "h-9 rounded-md" })}>
+            <FilesIcon data-icon="inline-start" />
+            All invoices
+          </Link>
+          <Link href="/bundles" className={buttonVariants({ variant: "outline", className: "h-9 rounded-md" })}>
             <BookOpenIcon data-icon="inline-start" />
             Bundles
-          </Link>
-          <Link href="/invoices" className={buttonVariants({ variant: "outline", size: "lg" })}>
-            <FilesIcon data-icon="inline-start" />
-            Saved Invoices
           </Link>
         </div>
       </div>
 
       <div
-        className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_280px]"
+        className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_300px]"
         onBlur={() => {
           if (dirty) setAutoSaveQueued(true);
         }}
       >
-        <div className="min-w-0 space-y-6">
+        <div className="min-w-0 space-y-5">
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BuildingIcon className="size-4 text-muted-foreground" />
-                From (Contractor)
-              </CardTitle>
+          <Card className={SECTION_CARD_CLASS}>
+            <CardHeader className={SECTION_HEADER_CLASS}>
+              <div className="flex items-center gap-3">
+                <span className="flex size-9 items-center justify-center rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                  <BuildingIcon className="size-4" />
+                </span>
+                <div>
+                  <CardTitle className="text-[15px] font-semibold tracking-[-0.02em]">From (contractor)</CardTitle>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Your business details on every invoice</p>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className={SECTION_CONTENT_CLASS}>
               <div className="space-y-0.5 text-xs">
-                <p className="text-sm font-medium">{settings.contractorCompanyName}</p>
+                <p className="text-sm font-semibold">{settings.contractorCompanyName}</p>
                 <p className="text-muted-foreground">
                   {settings.contractorName}
                   {settings.contractorLicense && ` · License #${settings.contractorLicense}`}
@@ -501,24 +528,33 @@ function InvoiceBuilder() {
               </div>
               <Link
                 href="/settings"
-                className="mt-3 inline-block text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+                className="mt-4 inline-flex items-center gap-1 rounded-sm text-xs font-medium text-indigo-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-indigo-400"
               >
-                Edit in Settings →
+                Edit in settings <ArrowRightIcon className="size-3" />
               </Link>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Bill To (Client)</CardTitle>
+          <Card className={SECTION_CARD_CLASS}>
+            <CardHeader className={SECTION_HEADER_CLASS}>
+              <div className="flex items-center gap-3">
+                <span className="flex size-9 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <UserRoundIcon className="size-4" />
+                </span>
+                <div>
+                  <CardTitle className="text-[15px] font-semibold tracking-[-0.02em]">Bill to (client)</CardTitle>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Who this invoice is for</p>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className={SECTION_CONTENT_CLASS}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {CLIENT_FIELDS.map(({ key, label }) => (
-                  <div key={key} className="space-y-1.5">
+                  <div key={key} className={`space-y-1.5 ${key === "name" || key === "street" ? "sm:col-span-2" : ""}`}>
                     <Label htmlFor={`field-${key}`}>{label}</Label>
                     <Input
                       id={`field-${key}`}
+                      className="h-10 bg-card"
                       value={fields[key]}
                       inputMode={key === "phone" ? "tel" : undefined}
                       onChange={(e) =>
@@ -531,16 +567,25 @@ function InvoiceBuilder() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Invoice Details</CardTitle>
+          <Card className={SECTION_CARD_CLASS}>
+            <CardHeader className={SECTION_HEADER_CLASS}>
+              <div className="flex items-center gap-3">
+                <span className="flex size-9 items-center justify-center rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <FileTextIcon className="size-4" />
+                </span>
+                <div>
+                  <CardTitle className="text-[15px] font-semibold tracking-[-0.02em]">Invoice details</CardTitle>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Reference numbers and date</p>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className={SECTION_CONTENT_CLASS}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="field-invoiceNumber">Invoice Number</Label>
                   <Input
                     id="field-invoiceNumber"
+                    className="h-10 bg-card"
                     value={fields.invoiceNumber}
                     onChange={(e) => setField("invoiceNumber", e.target.value)}
                   />
@@ -549,6 +594,7 @@ function InvoiceBuilder() {
                   <Label htmlFor="field-invoiceDate">Invoice Date</Label>
                   <Input
                     id="field-invoiceDate"
+                    className="h-10 bg-card"
                     type="date"
                     value={invoiceDate}
                     onChange={(e) => {
@@ -561,6 +607,7 @@ function InvoiceBuilder() {
                   <Label htmlFor="field-caseNumber">SAH Case Number (required)</Label>
                   <Input
                     id="field-caseNumber"
+                    className="h-10 bg-card"
                     value={fields.caseNumber}
                     onChange={(e) => setField("caseNumber", e.target.value)}
                     aria-invalid={fields.caseNumber.trim() === ""}
@@ -571,30 +618,51 @@ function InvoiceBuilder() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle>Line Items</CardTitle>
-                <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setBundlePickerOpen(true)}><PlusIcon data-icon="inline-start" /> Add Bundle</Button><Button size="sm" variant="outline" onClick={() => setSaveBundleOpen(true)}>Save as Bundle</Button></div>
+          <Card className={SECTION_CARD_CLASS}>
+            <CardHeader className={SECTION_HEADER_CLASS}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="flex size-9 items-center justify-center rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                    <ListChecksIcon className="size-4" />
+                  </span>
+                  <div>
+                    <CardTitle className="text-[15px] font-semibold tracking-[-0.02em]">Line items</CardTitle>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Work and pricing in construction order</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setBundlePickerOpen(true)}>
+                    <PlusIcon data-icon="inline-start" /> Add bundle
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setSaveBundleOpen(true)}>
+                    Save as bundle
+                  </Button>
+                </div>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className={SECTION_CONTENT_CLASS}>
               <LineItemsEditor rows={rows} onChange={handleRowsChange} />
             </CardContent>
           </Card>
         </div>
 
-        <div className="lg:sticky lg:top-20 lg:self-start">
-          <Card>
-            <CardHeader>
-              <CardTitle>Invoice Summary</CardTitle>
+        <div className="xl:sticky xl:top-20 xl:self-start">
+          <Card className={SECTION_CARD_CLASS}>
+            <CardHeader className={SECTION_HEADER_CLASS}>
+              <CardTitle className="text-[15px] font-semibold tracking-[-0.02em]">Invoice summary</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-5 px-5 py-5">
+              <div className="rounded-lg border border-indigo-500/15 bg-indigo-500/5 px-4 py-4">
+                <p className="text-[10px] font-semibold tracking-[0.1em] text-indigo-700 uppercase dark:text-indigo-300">Invoice total</p>
+                <p className="mt-2 font-mono text-2xl font-semibold tracking-[-0.05em] tabular-nums">{formatCurrency(total)}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{itemCount} {itemCount === 1 ? "line item" : "line items"}</p>
+              </div>
               {(() => {
+                if (total <= 0) return null;
                 const band = grantBand(total, maximumInvoiceAmount);
                 if (band === "under") {
                   return (
-                    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700 dark:text-amber-300">
                       Invoice is under {formatCurrency(minimumTargetAmount)}. Target between{" "}
                       {formatCurrency(minimumTargetAmount)} and {formatCurrency(maximumInvoiceAmount)}.
                     </div>
@@ -602,7 +670,7 @@ function InvoiceBuilder() {
                 }
                 if (band === "over") {
                   return (
-                    <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400">
+                    <div className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-300">
                       Exceeds the {formatCurrency(maximumInvoiceAmount)} invoice maximum by{" "}
                       {formatCurrency(total - maximumInvoiceAmount)}.
                     </div>
@@ -610,7 +678,7 @@ function InvoiceBuilder() {
                 }
                 return null;
               })()}
-              <dl className="space-y-2 text-xs">
+              <dl className="space-y-3 text-xs">
                 <div className="flex justify-between gap-2">
                   <dt className="text-muted-foreground">Invoice #</dt>
                   <dd className="truncate font-mono">{fields.invoiceNumber || "—"}</dd>
@@ -625,11 +693,11 @@ function InvoiceBuilder() {
                 </div>
                 <div className="flex justify-between gap-2">
                   <dt className="text-muted-foreground">Subtotal</dt>
-                  <dd className="font-mono tabular-nums">{formatCurrency(total)}</dd>
+                  <dd className="font-mono tabular-nums">{formatCurrency(regularSubtotal)}</dd>
                 </div>
-                <div className="flex justify-between gap-2 border-t pt-2 text-sm font-semibold">
-                  <dt>Total</dt>
-                  <dd className="font-mono tabular-nums">{formatCurrency(total)}</dd>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-muted-foreground">Profit ({profitPct}%)</dt>
+                  <dd className="font-mono tabular-nums">{formatCurrency(profitAmount)}</dd>
                 </div>
 
                 {total > maximumInvoiceAmount && (
@@ -650,16 +718,17 @@ function InvoiceBuilder() {
                 )}
               </dl>
 
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2 border-t border-border pt-5">
                 <Button
                   variant="outline"
+                  className="h-10 rounded-md"
                   disabled={!canBuild || pending !== null}
                   onClick={handleDownload}
                 >
                   <DownloadIcon data-icon="inline-start" />
                   {pending === "download" ? "Building..." : "Download Invoice"}
                 </Button>
-                <Button disabled={!canBuild || pending !== null} onClick={handleStartPacket}>
+                <Button className="h-10 rounded-md" disabled={!canBuild || pending !== null} onClick={handleStartPacket}>
                   {pending === "start" ? "Building..." : "Start Packet"}
                   <ArrowRightIcon data-icon="inline-end" />
                 </Button>

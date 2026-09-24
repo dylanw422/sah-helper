@@ -87,55 +87,60 @@ export function LineItemsEditor({
         order. Drag the handle or use the arrows to reorder.
       </p>
 
-      <div className="text-xs">
-        <div
-          className={`${GRID_COLS} h-9 border-b font-medium whitespace-nowrap text-muted-foreground`}
-        >
-          <span />
-          <span className="px-1">Description</span>
-          <span className="px-1">Qty</span>
-          <span className="px-1">Unit Price</span>
-          <span className="px-1 text-right">Amount</span>
-          <span />
-        </div>
-
-        <Reorder.Group axis="y" values={regularRows} onReorder={handleReorder} className="relative">
-          {regularRows.map((row, i) => (
-            <LineItemRowView
-              key={row.id}
-              row={row}
-              index={i}
-              count={regularRows.length}
-              focusDescription={focusId === row.id}
-              onFocused={() => setFocusId(null)}
-              onPatch={(patch) => setRow(row.id, patch)}
-              onMove={(dir) => moveRow(row.id, dir)}
-              onDelete={() => onChange([...regularRows.filter((r) => r.id !== row.id), profitRow])}
-              onAddRow={addRow}
-            />
-          ))}
-        </Reorder.Group>
-
-        {/* Profit row — always last, pinned */}
-        <div className={`${GRID_COLS} border-t bg-muted/30 py-2`}>
-          <span />
-          <span className="px-1 font-medium text-foreground">{PROFIT_DESCRIPTION}</span>
-          <div className="relative">
-            <Input
-              type="number"
-              inputMode="decimal"
-              value={profitRow.qty}
-              onChange={(e) => setRow(profitRow.id, { qty: e.target.value })}
-            />
-            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
-              %
-            </span>
+      <p className="text-[11px] text-muted-foreground md:hidden">
+        Scroll sideways to edit all columns.
+      </p>
+      <div className="overflow-x-auto md:overflow-x-visible" role="region" aria-label="Line item columns" tabIndex={0}>
+        <div className="min-w-[640px] text-xs md:min-w-0">
+          <div
+            className={`${GRID_COLS} h-9 border-b font-medium whitespace-nowrap text-muted-foreground`}
+          >
+            <span />
+            <span className="px-1">Description</span>
+            <span className="px-1">Qty</span>
+            <span className="px-1">Unit Price</span>
+            <span className="px-1 text-right">Amount</span>
+            <span />
           </div>
-          <span className="px-1 text-muted-foreground/50">—</span>
-          <span className="px-1 text-right font-mono tabular-nums">
-            {formatCurrency(profitAmount)}
-          </span>
-          <span />
+
+          <Reorder.Group axis="y" values={regularRows} onReorder={handleReorder} className="relative">
+            {regularRows.map((row, i) => (
+              <LineItemRowView
+                key={row.id}
+                row={row}
+                index={i}
+                count={regularRows.length}
+                focusDescription={focusId === row.id}
+                onFocused={() => setFocusId(null)}
+                onPatch={(patch) => setRow(row.id, patch)}
+                onMove={(dir) => moveRow(row.id, dir)}
+                onDelete={() => onChange([...regularRows.filter((r) => r.id !== row.id), profitRow])}
+                onAddRow={addRow}
+              />
+            ))}
+          </Reorder.Group>
+
+          {/* Profit row — always last, pinned */}
+          <div className={`${GRID_COLS} border-t bg-muted/30 py-2`}>
+            <span />
+            <span className="px-1 font-medium text-foreground">{PROFIT_DESCRIPTION}</span>
+            <div className="relative">
+              <Input
+                type="number"
+                inputMode="decimal"
+                value={profitRow.qty}
+                onChange={(e) => setRow(profitRow.id, { qty: e.target.value })}
+              />
+              <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
+                %
+              </span>
+            </div>
+            <span className="px-1 text-muted-foreground/50">—</span>
+            <span className="px-1 text-right font-mono tabular-nums">
+              {formatCurrency(profitAmount)}
+            </span>
+            <span />
+          </div>
         </div>
       </div>
 
@@ -153,7 +158,7 @@ export function LineItemsEditor({
           <span>Profit ({profitPct}%)</span>
           <span className="font-mono tabular-nums">{formatCurrency(profitAmount)}</span>
         </div>
-<div className="flex w-56 justify-between text-sm font-semibold">
+        <div className="flex w-56 justify-between text-sm font-semibold">
           <span>Total</span>
           <span className="font-mono tabular-nums">{formatCurrency(total)}</span>
         </div>
