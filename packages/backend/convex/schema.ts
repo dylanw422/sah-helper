@@ -62,6 +62,9 @@ export default defineSchema({
     invoiceDate: v.string(),
     // Last item is always the Profit row (qty = percentage)
     lineItems: v.array(lineItemValidator),
+    waiverIds: v.optional(v.array(v.id("customDocuments"))),
+    specSheetIds: v.optional(v.array(v.id("customDocuments"))),
+    jobSpecificIds: v.optional(v.array(v.id("customDocuments"))),
     total: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -91,6 +94,7 @@ export default defineSchema({
 
   settings: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
+    maximumInvoiceAmount: v.optional(v.number()),
     contractorCompanyName: v.string(),
     contractorName: v.string(),
     contractorStreet: v.string(),
@@ -154,6 +158,46 @@ export default defineSchema({
     .index("by_workspaceId", ["workspaceId"])
     .index("by_category", ["category"])
     .index("by_workspaceId_and_category", ["workspaceId", "category"]),
+
+  bundles: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    name: v.string(),
+    normalizedName: v.string(),
+    description: v.string(),
+    searchText: v.string(),
+    itemCount: v.number(),
+    documentCount: v.number(),
+    subtotalCents: v.number(),
+    revision: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_workspace_updated", ["workspaceId", "updatedAt"])
+    .index("by_workspace_name", ["workspaceId", "normalizedName"])
+    .searchIndex("search_bundles", {
+      searchField: "searchText",
+      filterFields: ["workspaceId"],
+    }),
+  bundleItems: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    bundleId: v.id("bundles"),
+    description: v.string(),
+    quantity: v.number(),
+    unitPriceCents: v.number(),
+    order: v.number(),
+  }).index("by_bundle_order", ["bundleId", "order"]),
+  bundleDocuments: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    bundleId: v.id("bundles"),
+    documentId: v.id("customDocuments"),
+    displayNameSnapshot: v.string(),
+    categorySnapshot: v.union(
+      v.literal("waiver"),
+      v.literal("spec-sheet"),
+      v.literal("job-specific"),
+    ),
+    order: v.number(),
+  }).index("by_bundle_order", ["bundleId", "order"]),
 
   // Pricing catalog — one row per distinct piece of work/material, learned
   // automatically from saved invoices and packet clients.

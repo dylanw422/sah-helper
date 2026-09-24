@@ -3,6 +3,7 @@ import { internalQuery, mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import { currentMembership, requireMembership } from "./lib/workspaces";
 import schema from "./schema";
+import { MAX_GRANT_AMOUNT } from "./lib/grant";
 
 export const requireCurrent = internalQuery({
   args: {},
@@ -81,6 +82,7 @@ export const create = mutation({
     });
     await ctx.db.insert("settings", {
       workspaceId,
+      maximumInvoiceAmount: MAX_GRANT_AMOUNT,
       contractorCompanyName: args.companyName.trim(),
       contractorName: args.contractorName.trim(),
       contractorStreet: args.street.trim(),

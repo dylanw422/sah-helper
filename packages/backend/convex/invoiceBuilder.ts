@@ -6,7 +6,6 @@ import type { Id } from "./_generated/dataModel";
 import { action, mutation, query } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
 import { assertWorkspace } from "./lib/workspaces";
-import { syncSource } from "./catalog";
 import { buildInvoicePdf } from "./lib/invoicePdf";
 import { lineItemValidator } from "./schema";
 
@@ -78,9 +77,27 @@ export const saveInvoice = mutation({
     caseNumber: v.string(),
     invoiceDate: v.string(),
     lineItems: v.array(lineItemValidator),
+    waiverIds: v.optional(v.array(v.id("customDocuments"))),
+    specSheetIds: v.optional(v.array(v.id("customDocuments"))),
+    jobSpecificIds: v.optional(v.array(v.id("customDocuments"))),
   },
   handler: async (ctx, { id, ...data }) => {
     const workspaceId = await requireAuth(ctx);
+    const groups = [
+      [data.waiverIds ?? [], "waiver"],
+      [data.specSheetIds ?? [], "spec-sheet"],
+      [data.jobSpecificIds ?? [], "job-specific"],
+    ] as const;
+    const allIds = groups.flatMap(([ids]) => ids);
+    if (allIds.length > 50 || new Set(allIds).size !== allIds.length)
+      throw new Error("Select at most 50 unique supporting documents.");
+    for (const [ids, category] of groups) {
+      for (const documentId of ids) {
+        const doc = await ctx.db.get(documentId);
+        if (!doc || doc.category !== category)
+          throw new Error("A selected supporting document is unavailable. Remove it and try again.");
+      }
+    }
     const total = data.lineItems.reduce((sum, item) => sum + item.amount, 0);
     const now = Date.now();
     let savedId: Id<"invoices">;
@@ -97,14 +114,6 @@ export const saveInvoice = mutation({
         updatedAt: now,
       });
     }
-    const observedAt = Date.parse(`${data.invoiceDate}T00:00:00`) || now;
-    await syncSource(ctx, {
-      workspaceId,
-      sourceType: "invoice",
-      sourceId: savedId,
-      observedAt,
-      lineItems: data.lineItems,
-    });
     return savedId;
   },
 });
@@ -133,19 +142,40 @@ export const getInvoice = query({
   },
 });
 
+export const updateInvoiceDocuments = mutation({
+  args: {
+    id: v.id("invoices"),
+    waiverIds: v.array(v.id("customDocuments")),
+    specSheetIds: v.array(v.id("customDocuments")),
+    jobSpecificIds: v.array(v.id("customDocuments")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const workspaceId = await requireAuth(ctx);
+    assertWorkspace(await ctx.db.get(args.id), workspaceId);
+    const groups = [
+      [args.waiverIds, "waiver"], [args.specSheetIds, "spec-sheet"], [args.jobSpecificIds, "job-specific"],
+    ] as const;
+    const ids = groups.flatMap(([group]) => group);
+    if (ids.length > 50 || new Set(ids).size !== ids.length)
+      throw new Error("Select at most 50 unique supporting documents.");
+    for (const [group, category] of groups) for (const id of group) {
+      const doc = await ctx.db.get(id);
+      if (!doc || doc.category !== category) throw new Error("A selected supporting document is unavailable.");
+    }
+    await ctx.db.patch(args.id, {
+      waiverIds: args.waiverIds, specSheetIds: args.specSheetIds,
+      jobSpecificIds: args.jobSpecificIds, updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
 export const deleteInvoice = mutation({
   args: { id: v.id("invoices") },
   handler: async (ctx, { id }) => {
     const workspaceId = await requireAuth(ctx);
     assertWorkspace(await ctx.db.get(id), workspaceId);
-    // Retract observations before deleting so catalog stats recompute correctly.
-    await syncSource(ctx, {
-      workspaceId,
-      sourceType: "invoice",
-      sourceId: id,
-      observedAt: Date.now(),
-      lineItems: [],
-    });
     await ctx.db.delete(id);
   },
 });

@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { MAX_GRANT_AMOUNT } from "@/lib/grant";
 
 import { TemplatesTab } from "./templates-tab";
 
@@ -138,6 +139,7 @@ function ContractorTab() {
   const settings = useQuery(api.settings.getSettings);
   const updateSettings = useMutation(api.settings.updateSettings);
   const [form, setForm] = useState<SettingsForm>(EMPTY);
+  const [maximumInvoiceAmount, setMaximumInvoiceAmount] = useState(String(MAX_GRANT_AMOUNT));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [hydrated, setHydrated] = useState(false);
@@ -156,6 +158,7 @@ function ContractorTab() {
         contractorEmail: settings.contractorEmail,
         contractorLicense: settings.contractorLicense,
       });
+      setMaximumInvoiceAmount(String(settings.maximumInvoiceAmount ?? MAX_GRANT_AMOUNT));
       setHydrated(true);
     }
   }, [settings, hydrated]);
@@ -167,9 +170,15 @@ function ContractorTab() {
   }, []);
 
   const handleSave = async () => {
+    const amount = Number(maximumInvoiceAmount);
+    if (!maximumInvoiceAmount.trim() || !Number.isFinite(amount) || amount <= 0 ||
+        Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) {
+      toast.error("Enter a positive maximum invoice amount with up to two decimal places.");
+      return;
+    }
     setSaving(true);
     try {
-      await updateSettings(form);
+      await updateSettings({ ...form, maximumInvoiceAmount: amount });
       setSaved(true);
       if (savedTimer.current) clearTimeout(savedTimer.current);
       savedTimer.current = setTimeout(() => setSaved(false), 1500);
@@ -214,6 +223,23 @@ function ContractorTab() {
             />
           </div>
         ))}
+      </div>
+
+      <div className="mt-6 space-y-1.5 border-t border-border pt-5">
+        <Label htmlFor="maximumInvoiceAmount" className="text-[10px] font-medium tracking-[0.1em] text-muted-foreground/70 uppercase">
+          Maximum Invoice Amount
+        </Label>
+        <Input
+          id="maximumInvoiceAmount"
+          type="number"
+          min="0.01"
+          step="0.01"
+          value={maximumInvoiceAmount}
+          onChange={(e) => setMaximumInvoiceAmount(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">
+          Used for invoice warnings and AI generated estimates in this workspace.
+        </p>
       </div>
 
       <Button

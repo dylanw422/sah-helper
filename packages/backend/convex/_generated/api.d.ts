@@ -9,6 +9,7 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as bundles from "../bundles.js";
 import type * as catalog from "../catalog.js";
 import type * as clientFiles from "../clientFiles.js";
 import type * as clients from "../clients.js";
@@ -16,7 +17,6 @@ import type * as customDocuments from "../customDocuments.js";
 import type * as healthCheck from "../healthCheck.js";
 import type * as http from "../http.js";
 import type * as invoiceBuilder from "../invoiceBuilder.js";
-import type * as invoiceGenerator from "../invoiceGenerator.js";
 import type * as invoices from "../invoices.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_constructionStageCompletionPdf from "../lib/constructionStageCompletionPdf.js";
@@ -49,6 +49,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  bundles: typeof bundles;
   catalog: typeof catalog;
   clientFiles: typeof clientFiles;
   clients: typeof clients;
@@ -56,7 +57,6 @@ declare const fullApi: ApiFromModules<{
   healthCheck: typeof healthCheck;
   http: typeof http;
   invoiceBuilder: typeof invoiceBuilder;
-  invoiceGenerator: typeof invoiceGenerator;
   invoices: typeof invoices;
   "lib/auth": typeof lib_auth;
   "lib/constructionStageCompletionPdf": typeof lib_constructionStageCompletionPdf;

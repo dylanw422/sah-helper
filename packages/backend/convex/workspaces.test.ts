@@ -100,7 +100,7 @@ test("new accounts have no data access until onboarding and cannot create a seco
   ).rejects.toThrow("already belongs");
 });
 
-test("clients, invoices, settings, pricing and direct IDs are isolated in both directions", async () => {
+test("clients, invoices, settings, bundles and direct IDs are isolated in both directions", async () => {
   const t = setup();
   const a = await account(t, "a@example.com");
   const b = await account(t, "b@example.com");
@@ -119,7 +119,7 @@ test("clients, invoices, settings, pricing and direct IDs are isolated in both d
   expect(await a.query(api.clients.listClients)).toHaveLength(1);
   expect(await b.query(api.clients.listClients)).toEqual([]);
   expect(await b.query(api.invoiceBuilder.listInvoices)).toEqual([]);
-  expect(await b.query(api.catalog.listItems)).toEqual([]);
+  expect((await b.query(api.bundles.listBundles, { paginationOpts: { numItems: 20, cursor: null } })).page).toEqual([]);
   expect(await b.query(api.settings.getSettings)).toMatchObject({
     contractorCompanyName: "Company B",
   });
@@ -147,21 +147,165 @@ test("clients, invoices, settings, pricing and direct IDs are isolated in both d
   await expect(
     b.mutation(api.invoiceBuilder.deleteInvoice, { id }),
   ).rejects.toThrow("workspace");
-  const [item] = await a.query(api.catalog.listItems);
+  const bundleId = await a.mutation(api.bundles.createBundle, {
+    name: "Ramp work", description: "Entry work",
+    items: [{ description: "Ramp", quantity: 1, unitPriceCents: 10000 }], documentIds: [],
+  });
   await expect(
-    b.mutation(api.catalog.deleteItem, { id: item._id }),
+    b.mutation(api.bundles.deleteBundle, { id: bundleId }),
   ).rejects.toThrow("workspace");
-  await b.mutation(api.catalog.triggerBackfill);
-  expect(await a.query(api.catalog.listItems)).toHaveLength(1);
+  await expect(b.query(api.bundles.getBundle, { id: bundleId })).rejects.toThrow("workspace");
+  expect((await a.query(api.bundles.listBundles, { paginationOpts: { numItems: 20, cursor: null } })).page).toHaveLength(1);
   const bid = await b.mutation(api.invoiceBuilder.saveInvoice, {
     ...invoice,
     lineItems: [{ description: "Ramp", qty: 1, unitPrice: 900, amount: 900 }],
   });
-  expect((await a.query(api.catalog.listItems))[0].lastUnitPrice).toBe(100);
-  expect((await b.query(api.catalog.listItems))[0].lastUnitPrice).toBe(900);
+  expect((await a.query(api.bundles.getBundle, { id: bundleId }))!.items[0].unitPriceCents).toBe(10000);
+  expect((await b.query(api.bundles.listBundles, { paginationOpts: { numItems: 20, cursor: null } })).page).toEqual([]);
   await expect(
     a.query(api.invoiceBuilder.getInvoice, { id: bid }),
   ).rejects.toThrow("workspace");
+  expect(await t.run(ctx => ctx.db.query("priceObservations").collect())).toEqual([]);
+  expect(await t.run(ctx => ctx.db.query("catalogItems").collect())).toEqual([]);
+});
+
+test("bundles validate prices, revisions, document visibility and keep invoice copies independent", async () => {
+  const t = setup();
+  const a = await account(t, "bundle-a@example.com");
+  const b = await account(t, "bundle-b@example.com");
+  const wa = await a.mutation(api.workspaces.create, company("Bundle A"));
+  const wb = await b.mutation(api.workspaces.create, company("Bundle B"));
+  const specStorage = await file(t, wa);
+  const contractStorage = await file(t, wb);
+  const specId = await a.mutation(api.customDocuments.registerCustomDocument, {
+    category: "spec-sheet", displayName: "Ramp specs", storageId: specStorage,
+  });
+  const contractId = await b.mutation(api.customDocuments.registerCustomDocument, {
+    category: "contract", displayName: "Private contract", storageId: contractStorage,
+  });
+  const content = {
+    name: "Ramp package", description: "Entry access",
+    items: [{ description: "Ramp", quantity: 1.125, unitPriceCents: 9999 }],
+    documentIds: [specId],
+  };
+  const id = await a.mutation(api.bundles.createBundle, content);
+  const detail = await a.query(api.bundles.getBundle, { id });
+  expect(detail!.subtotalCents).toBe(11249);
+  expect(detail!.documents[0].available).toBe(true);
+  expect((await b.query(api.bundles.listBundles, { paginationOpts: { numItems: 20, cursor: null }, search: "Ramp" })).page).toEqual([]);
+  await expect(a.mutation(api.bundles.createBundle, { ...content, name: " RAMP  package " })).rejects.toThrow("already exists");
+  await expect(a.mutation(api.bundles.createBundle, { ...content, documentIds: [contractId] })).rejects.toThrow();
+  await expect(a.mutation(api.bundles.createBundle, { ...content, name: "Bad price", items: [{ description: "Ramp", quantity: 1, unitPriceCents: -1 }] })).rejects.toThrow("price");
+  await expect(b.mutation(api.bundles.updateBundle, { id, expectedRevision: 1, ...content })).rejects.toThrow("workspace");
+  await a.mutation(api.bundles.updateBundle, { id, expectedRevision: 1, ...content, items: [{ description: "Ramp", quantity: 2, unitPriceCents: 5000 }] });
+  await expect(a.mutation(api.bundles.updateBundle, { id, expectedRevision: 1, ...content })).rejects.toThrow("Reload");
+  const invoiceId = await a.mutation(api.invoiceBuilder.saveInvoice, { ...invoice, specSheetIds: [specId] });
+  const saved = await a.query(api.invoiceBuilder.getInvoice, { id: invoiceId });
+  expect(saved!.lineItems[0].unitPrice).toBe(100);
+  expect(saved!.specSheetIds).toEqual([specId]);
+  await a.mutation(api.invoiceBuilder.updateInvoiceDocuments, {
+    id: invoiceId, waiverIds: [], specSheetIds: [specId], jobSpecificIds: [],
+  });
+  await expect(b.mutation(api.invoiceBuilder.updateInvoiceDocuments, {
+    id: invoiceId, waiverIds: [], specSheetIds: [], jobSpecificIds: [],
+  })).rejects.toThrow("workspace");
+  const copyId = await a.mutation(api.bundles.duplicateBundle, { id, name: "Ramp package copy" });
+  await a.mutation(api.bundles.deleteBundle, { id });
+  expect((await a.query(api.bundles.getBundle, { id: copyId }))!.items[0].unitPriceCents).toBe(5000);
+  expect((await a.query(api.invoiceBuilder.getInvoice, { id: invoiceId }))!.lineItems[0].unitPrice).toBe(100);
+  await expect(a.mutation(api.invoiceBuilder.saveInvoice, { ...invoice, waiverIds: [specId] })).rejects.toThrow("unavailable");
+  await expect(b.mutation(api.invoiceBuilder.saveInvoice, { ...invoice, waiverIds: [contractId] })).rejects.toThrow("unavailable");
+});
+
+test("maximum invoice amount is saved per workspace and rejects invalid values", async () => {
+  const t = setup();
+  const a = await account(t, "limit-a@example.com");
+  const b = await account(t, "limit-b@example.com");
+  await a.mutation(api.workspaces.create, company("Limit A"));
+  await b.mutation(api.workspaces.create, company("Limit B"));
+
+  const original = await a.query(api.settings.getSettings);
+  expect(original?.maximumInvoiceAmount).toBe(126_526);
+  const { _id, _creationTime, workspaceId, maximumInvoiceAmount, ...contractor } = original!;
+  await a.mutation(api.settings.updateSettings, {
+    ...contractor,
+    maximumInvoiceAmount: 98_500.25,
+  });
+
+  expect((await a.query(api.settings.getSettings))?.maximumInvoiceAmount).toBe(98_500.25);
+  expect((await b.query(api.settings.getSettings))?.maximumInvoiceAmount).toBe(126_526);
+  await expect(a.mutation(api.settings.updateSettings, {
+    ...contractor,
+    maximumInvoiceAmount: -1,
+  })).rejects.toThrow("positive dollar amount");
+  expect((await a.query(api.settings.getSettings))?.maximumInvoiceAmount).toBe(98_500.25);
+});
+
+test("a confirmed packet replaces the same client and removes the old packet files", async () => {
+  const t = setup();
+  const a = await account(t, "replacement-a@example.com");
+  const b = await account(t, "replacement-b@example.com");
+  const workspaceId = await a.mutation(api.workspaces.create, company("Replacement A"));
+  await b.mutation(api.workspaces.create, company("Replacement B"));
+  const oldPacketId = await file(t, workspaceId);
+  const oldDocumentId = await file(t, workspaceId);
+  const uploadedId = await file(t, workspaceId);
+  const { invoiceDate, ...clientData } = invoice;
+  const clientId = await a.mutation(api.clients.createClient, {
+    ...clientData,
+    drawCount: 4,
+    subtotal: 100,
+    total: 100,
+    packetStorageId: oldPacketId,
+  });
+  await a.mutation(api.clientFiles.addClientFile, {
+    clientId, storageId: oldDocumentId, filename: "Old contract.pdf", type: "generated",
+  });
+  await a.mutation(api.clientFiles.addClientFile, {
+    clientId, storageId: uploadedId, filename: "Old attachment.pdf", type: "uploaded",
+  });
+  await a.mutation(api.clients.updateClientStatus, { clientId, status: "signed" });
+
+  expect((await a.query(api.clients.findExistingForPacket, {
+    name: "Different Name", street: "Somewhere Else", caseNumber: " 123 ",
+  }))?.id).toBe(clientId);
+  expect((await a.query(api.clients.findExistingForPacket, {
+    name: " private client ", street: "20 main", caseNumber: "new case",
+  }))?.id).toBe(clientId);
+  expect(await b.query(api.clients.findExistingForPacket, {
+    name: invoice.name, street: invoice.street, caseNumber: invoice.caseNumber,
+  })).toBeNull();
+
+  const newPacketId = await file(t, workspaceId);
+  const newDocumentId = await file(t, workspaceId);
+  const replacement = {
+    ...clientData,
+    invoiceNumber: "INV-2026-002",
+    drawCount: 5 as const,
+    subtotal: 200,
+    total: 200,
+    lineItems: [{ description: "New ramp", qty: 1, unitPrice: 200, amount: 200 }],
+    packetStorageId: newPacketId,
+    files: [{ storageId: newDocumentId, filename: "New contract.pdf" }],
+  };
+  await expect(a.mutation(internal.clients.saveGeneratedPacket, replacement))
+    .rejects.toThrow("confirm the replacement");
+  expect((await a.query(api.clients.getClient, { clientId }))?.packetStorageId).toBe(oldPacketId);
+
+  const savedId = await a.mutation(internal.clients.saveGeneratedPacket, {
+    ...replacement, replaceClientId: clientId,
+  });
+  expect(savedId).toBe(clientId);
+  expect(await a.query(api.clients.listClients)).toHaveLength(1);
+  expect(await a.query(api.clients.getClient, { clientId })).toMatchObject({
+    invoiceNumber: "INV-2026-002", status: "unsigned", packetDirty: false,
+    drawCount: 5, total: 200, packetStorageId: newPacketId,
+  });
+  expect((await a.query(api.clientFiles.listClientFiles, { clientId })).map(f => f.filename))
+    .toEqual(["New contract.pdf"]);
+  for (const id of [oldPacketId, oldDocumentId, uploadedId]) {
+    expect(await t.run(ctx => ctx.storage.get(id))).toBeNull();
+  }
 });
 
 test("files cannot be parsed, attached, imported or registered in another workspace", async () => {
@@ -199,13 +343,6 @@ test("files cannot be parsed, attached, imported or registered in another worksp
   ).rejects.toThrow("workspace");
   await expect(
     b.action(api.invoices.parseInvoice, { storageId }),
-  ).rejects.toThrow("workspace");
-  await expect(
-    b.mutation(api.catalog.confirmImport, {
-      storageId,
-      fileName: "stolen",
-      lineItems: [],
-    }),
   ).rejects.toThrow("workspace");
   await expect(
     b.mutation(api.templates.registerTemplate, {

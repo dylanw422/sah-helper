@@ -4,11 +4,14 @@ import { api } from "@sah-helper/backend/convex/_generated/api";
 import type { Doc, Id } from "@sah-helper/backend/convex/_generated/dataModel";
 import { Button } from "@sah-helper/ui/components/button";
 import { Label } from "@sah-helper/ui/components/label";
-import { useAction, useMutation } from "convex/react";
+import { useAction, useConvex, useMutation } from "convex/react";
 import { AlertCircleIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CompleteStep } from "@/components/wizard/complete-step";
 import { DrawCountSelect, type DrawCount } from "@/components/wizard/draw-count-select";
 import {
@@ -19,7 +22,7 @@ import {
 import { StepIndicator } from "@/components/wizard/step-indicator";
 import { UploadStep } from "@/components/wizard/upload-step";
 import { VerifyStep, type VerifiedData } from "@/components/wizard/verify-step";
-import { consumeInvoiceDraft } from "@/lib/invoice-draft";
+import { consumeInvoiceDraft, writeInvoiceRevisionDraft } from "@/lib/invoice-draft";
 import { useWorkspaceId } from "@/components/workspace-context";
 import { formatCurrency, formatDisplayDate } from "@/lib/format";
 
@@ -55,10 +58,14 @@ function toStepStates(total: number, doneCount: number, processing: boolean): St
 }
 
 export default function NewPacketPage() {
+  const router = useRouter();
+  const convex = useConvex();
   const workspaceId = useWorkspaceId();
   const [phase, setPhase] = useState<WizardPhase>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [savedInvoice, setSavedInvoice] = useState<Doc<"invoices"> | null>(null);
+  const [sourceInvoiceId, setSourceInvoiceId] = useState<Id<"invoices"> | null>(null);
+  const [sourceInvoiceDate, setSourceInvoiceDate] = useState<string | null>(null);
   const [preparingSaved, setPreparingSaved] = useState(false);
   const [drawCount, setDrawCount] = useState<DrawCount | null>(null);
   const [extracted, setExtracted] = useState<ExtractedData | null>(null);
@@ -72,6 +79,12 @@ export default function NewPacketPage() {
   const [error, setError] = useState<string | null>(null);
   const [doneCount, setDoneCount] = useState(0);
   const [fromBuilder, setFromBuilder] = useState(false);
+  const [checkingExisting, setCheckingExisting] = useState(false);
+  const [pendingReplacement, setPendingReplacement] = useState<{
+    clientId: Id<"clients">;
+    clientName: string;
+    data: VerifiedData;
+  } | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -80,6 +93,7 @@ export default function NewPacketPage() {
   const parseInvoice = useAction(api.invoices.parseInvoice);
   const generatePacket = useAction(api.packets.generatePacket);
   const buildInvoice = useAction(api.invoiceBuilder.buildInvoice);
+  const updateInvoiceDocuments = useMutation(api.invoiceBuilder.updateInvoiceDocuments);
 
   const clearTimers = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -96,6 +110,8 @@ export default function NewPacketPage() {
     const draft = consumeInvoiceDraft(workspaceId);
     if (!draft) return;
     setInvoiceStorageId(draft.invoiceStorageId);
+    setSourceInvoiceId(draft.invoiceId ?? null);
+    setSourceInvoiceDate(draft.invoiceDate ?? null);
     setExtracted({ ...draft.data, totalMismatchWarning: false });
     setFromBuilder(true);
     setPhase("draw-count");
@@ -109,6 +125,8 @@ export default function NewPacketPage() {
     async (selectedFile: File, selectedDrawCount: DrawCount) => {
       setFile(selectedFile);
       setSavedInvoice(null);
+      setSourceInvoiceId(null);
+      setSourceInvoiceDate(null);
       setDrawCount(selectedDrawCount);
       setError(null);
       setDoneCount(0);
@@ -163,6 +181,8 @@ export default function NewPacketPage() {
   const startFromSaved = useCallback(
     async (invoice: Doc<"invoices">, selectedDrawCount: DrawCount) => {
       setSavedInvoice(invoice);
+      setSourceInvoiceId(invoice._id);
+      setSourceInvoiceDate(invoice.invoiceDate);
       setFile(null);
       setDrawCount(selectedDrawCount);
       setError(null);
@@ -192,6 +212,9 @@ export default function NewPacketPage() {
           invoiceNumber: invoice.invoiceNumber,
           caseNumber: invoice.caseNumber,
           lineItems: invoice.lineItems,
+          waiverIds: invoice.waiverIds ?? [],
+          specSheetIds: invoice.specSheetIds ?? [],
+          jobSpecificIds: invoice.jobSpecificIds ?? [],
           totalMismatchWarning: false,
         });
         setPhase("verify");
@@ -205,7 +228,7 @@ export default function NewPacketPage() {
   );
 
   const startGeneration = useCallback(
-    async (data: VerifiedData) => {
+    async (data: VerifiedData, replaceClientId?: Id<"clients">) => {
       if (!drawCount || !invoiceStorageId) return;
       setVerified(data);
       setError(null);
@@ -232,7 +255,20 @@ export default function NewPacketPage() {
           waiverIds: data.waiverIds ?? [],
           specSheetIds: data.specSheetIds ?? [],
           jobSpecificIds: data.jobSpecificIds ?? [],
+          replaceClientId,
         });
+        if (sourceInvoiceId) {
+          try {
+            await updateInvoiceDocuments({
+              id: sourceInvoiceId,
+              waiverIds: data.waiverIds ?? [],
+              specSheetIds: data.specSheetIds ?? [],
+              jobSpecificIds: data.jobSpecificIds ?? [],
+            });
+          } catch {
+            toast.error("Packet created, but the invoice's document selections could not be updated.");
+          }
+        }
         clearTimers();
         setDoneCount(8);
         later(() => setDoneCount(9), 500);
@@ -249,14 +285,37 @@ export default function NewPacketPage() {
         setError(e instanceof Error ? e.message : "Something went wrong while generating the packet.");
       }
     },
-    [drawCount, invoiceStorageId, generatePacket, clearTimers, later],
+    [drawCount, invoiceStorageId, generatePacket, sourceInvoiceId, updateInvoiceDocuments, clearTimers, later],
   );
+
+  const checkExistingClient = useCallback(async (data: VerifiedData) => {
+    if (checkingExisting) return;
+    setCheckingExisting(true);
+    try {
+      const existing = await convex.query(api.clients.findExistingForPacket, {
+        name: data.name,
+        street: data.street,
+        caseNumber: data.caseNumber.trim(),
+      });
+      if (existing) {
+        setPendingReplacement({ clientId: existing.id, clientName: existing.name, data });
+      } else {
+        await startGeneration(data);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not check for an existing client.");
+    } finally {
+      setCheckingExisting(false);
+    }
+  }, [checkingExisting, convex, startGeneration]);
 
   const restart = useCallback(() => {
     clearTimers();
     setPhase("upload");
     setFile(null);
     setSavedInvoice(null);
+    setSourceInvoiceId(null);
+    setSourceInvoiceDate(null);
     setDrawCount(null);
     setExtracted(null);
     setInvoiceStorageId(null);
@@ -265,6 +324,8 @@ export default function NewPacketPage() {
     setError(null);
     setDoneCount(0);
     setFromBuilder(false);
+    setPendingReplacement(null);
+    setCheckingExisting(false);
   }, [clearTimers]);
 
   const stepIndex =
@@ -293,7 +354,7 @@ export default function NewPacketPage() {
               onRetry={() => {
                 setError(null);
                 if (phase === "generating" && verified) {
-                  startGeneration(verified);
+                  void checkExistingClient(verified);
                 } else {
                   setPhase("upload");
                 }
@@ -326,8 +387,9 @@ export default function NewPacketPage() {
               initial={verified ?? extracted}
               drawCount={drawCount}
               totalMismatchWarning={extracted.totalMismatchWarning}
+              checkingExisting={checkingExisting}
               onBack={() => setPhase(fromBuilder ? "draw-count" : "upload")}
-              onGenerate={startGeneration}
+              onGenerate={checkExistingClient}
             />
           ) : phase === "generating" ? (
             <ProcessingView
@@ -342,10 +404,36 @@ export default function NewPacketPage() {
               clientName={result.clientName}
               total={result.total}
               onRestart={restart}
+              onRevise={() => {
+                if (!verified) return;
+                writeInvoiceRevisionDraft(workspaceId, {
+                  data: verified,
+                  invoiceDate: sourceInvoiceDate ?? undefined,
+                  invoiceId: sourceInvoiceId ?? undefined,
+                });
+                router.push(sourceInvoiceId
+                  ? `/invoice-builder?id=${sourceInvoiceId}`
+                  : "/invoice-builder");
+              }}
             />
           ) : null}
         </motion.div>
       </AnimatePresence>
+      <ConfirmDialog
+        open={pendingReplacement !== null}
+        title="Replace this client's packet?"
+        description={pendingReplacement
+          ? `${pendingReplacement.clientName} already has a client record. Generating a new packet will permanently delete their existing packet and all files attached to it. This cannot be undone.`
+          : ""}
+        confirmLabel="Replace Packet"
+        onConfirm={() => {
+          if (!pendingReplacement) return;
+          const { clientId, data } = pendingReplacement;
+          setPendingReplacement(null);
+          void startGeneration(data, clientId);
+        }}
+        onCancel={() => setPendingReplacement(null)}
+      />
     </div>
   );
 }

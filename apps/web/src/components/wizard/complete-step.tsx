@@ -5,10 +5,11 @@ import { api } from "@sah-helper/backend/convex/_generated/api";
 import { Button } from "@sah-helper/ui/components/button";
 import confetti from "canvas-confetti";
 import { useQuery } from "convex/react";
-import { DownloadIcon } from "lucide-react";
+import { DownloadIcon, EyeIcon, Loader2Icon, PencilIcon, XIcon } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
 import { downloadFile } from "@/lib/download";
@@ -25,14 +26,20 @@ export function CompleteStep({
   clientName,
   total,
   onRestart,
+  onRevise,
 }: {
   clientId: Id<"clients">;
   clientName: string;
   total: number;
   onRestart: () => void;
+  onRevise: () => void;
 }) {
   const downloadUrl = useQuery(api.clients.getPacketDownloadUrl, { clientId });
   const [downloading, setDownloading] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const previewRequest = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const colors = ["#6366f1", "#34d399", "#f59e0b"];
@@ -43,6 +50,56 @@ export function CompleteStep({
     );
     return () => clearTimeout(timer);
   }, []);
+
+  const closePreview = useCallback(() => {
+    previewRequest.current?.abort();
+    previewRequest.current = null;
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setPreviewLoading(false);
+    setPreviewOpen(false);
+  }, [previewUrl]);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closePreview();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [previewOpen, closePreview]);
+
+  useEffect(() => () => previewRequest.current?.abort(), []);
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  const handlePreview = async () => {
+    if (!downloadUrl || previewOpen) return;
+    const controller = new AbortController();
+    previewRequest.current = controller;
+    setPreviewLoading(true);
+    setPreviewOpen(true);
+    try {
+      const response = await fetch(downloadUrl, { signal: controller.signal });
+      if (!response.ok) throw new Error("Could not load packet preview.");
+      const blob = await response.blob();
+      if (previewRequest.current !== controller) return;
+      const pdf = blob.type === "application/pdf"
+        ? blob
+        : new Blob([blob], { type: "application/pdf" });
+      setPreviewUrl(URL.createObjectURL(pdf));
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setPreviewOpen(false);
+      toast.error(error instanceof Error ? error.message : "Could not load packet preview.");
+    } finally {
+      if (previewRequest.current === controller) {
+        previewRequest.current = null;
+        setPreviewLoading(false);
+      }
+    }
+  };
 
   const handleDownload = async () => {
     if (!downloadUrl) return;
@@ -93,6 +150,25 @@ export function CompleteStep({
         </Button>
       </motion.div>
 
+      <div className="mt-3 grid w-full grid-cols-2 gap-3">
+        <Button
+          variant="outline"
+          size="lg"
+          disabled={!downloadUrl || previewLoading}
+          onClick={handlePreview}
+        >
+          <EyeIcon data-icon="inline-start" />
+          Preview Packet
+        </Button>
+        <Button variant="outline" size="lg" onClick={onRevise}>
+          <PencilIcon data-icon="inline-start" />
+          Revise Invoice
+        </Button>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        After revising the invoice, generate a new packet to replace this one.
+      </p>
+
       <div className="mt-6 flex items-center gap-4 text-xs">
         <Link href={`/clients/${clientId}`} className="text-primary underline-offset-4 hover:underline">
           View Client Record
@@ -106,6 +182,42 @@ export function CompleteStep({
           Process Another Invoice
         </button>
       </div>
+      {previewOpen && createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-6"
+          onClick={closePreview}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Packet preview"
+            className="flex h-full max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-md border border-border bg-card text-left shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h2 className="text-sm font-semibold">Packet preview</h2>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Close preview"
+                onClick={closePreview}
+                autoFocus
+              >
+                <XIcon className="size-4" />
+              </Button>
+            </div>
+            {previewUrl ? (
+              <iframe title="Packet PDF" src={previewUrl} className="min-h-0 w-full flex-1 bg-white" />
+            ) : (
+              <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Loader2Icon className="size-4 animate-spin" />
+                Loading packet...
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

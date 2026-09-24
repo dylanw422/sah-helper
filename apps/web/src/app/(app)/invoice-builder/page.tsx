@@ -7,22 +7,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@sah-helper/ui/compone
 import { Input } from "@sah-helper/ui/components/input";
 import { Label } from "@sah-helper/ui/components/label";
 import { Skeleton } from "@sah-helper/ui/components/skeleton";
-import { Textarea } from "@sah-helper/ui/components/textarea";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
   ArrowRightIcon,
   BookOpenIcon,
   BuildingIcon,
-  ChevronDownIcon,
   DownloadIcon,
   FilesIcon,
-  MicIcon,
-  MicOffIcon,
   SettingsIcon,
-  SparklesIcon,
-  XIcon,
+  PlusIcon,
 } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -30,6 +24,8 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { BundlePicker } from "@/components/invoice/bundle-picker";
+import { SaveAsBundle } from "@/components/invoice/save-as-bundle";
 import {
   createLineItemRow,
   createProfitRow,
@@ -41,8 +37,8 @@ import {
 import type { VerifiedData } from "@/components/wizard/verify-step";
 import { downloadFile } from "@/lib/download";
 import { formatCurrency, formatDisplayDate, maskPhone } from "@/lib/format";
-import { grantBand, MAX_GRANT_AMOUNT, MIN_TARGET_AMOUNT } from "@/lib/grant";
-import { writeInvoiceDraft } from "@/lib/invoice-draft";
+import { grantBand, MAX_GRANT_AMOUNT, targetInvoiceAmount } from "@/lib/grant";
+import { consumeInvoiceRevisionDraft, writeInvoiceDraft } from "@/lib/invoice-draft";
 import { useWorkspaceId } from "@/components/workspace-context";
 
 type BuiltInvoice = { storageId: Id<"_storage">; url: string };
@@ -57,14 +53,16 @@ function todayInputValue(): string {
 }
 
 function savedLineItemsToRows(items: VerifiedData["lineItems"]): LineItemRow[] {
-  const rows: LineItemRow[] = items.map((item) => ({
+  const rows: LineItemRow[] = items.map((item, index) => ({
     id: crypto.randomUUID(),
-    description: item.description,
+    description: index === items.length - 1 && /profit/i.test(item.description)
+      ? PROFIT_DESCRIPTION
+      : item.description,
     qty: String(item.qty),
     unitPrice: String(item.unitPrice),
   }));
   if (rows[rows.length - 1]?.description !== PROFIT_DESCRIPTION) {
-    rows.push(createProfitRow());
+    rows.push({ ...createProfitRow(), qty: "0" });
   }
   if (rows.length === 1) rows.unshift(createLineItemRow());
   return rows;
@@ -106,6 +104,8 @@ function InvoiceBuilder() {
   const idParam = useSearchParams().get("id");
   const invoiceId = (idParam as Id<"invoices"> | null) ?? null;
   const settings = useQuery(api.settings.getSettings);
+  const maximumInvoiceAmount = settings?.maximumInvoiceAmount ?? MAX_GRANT_AMOUNT;
+  const minimumTargetAmount = targetInvoiceAmount(maximumInvoiceAmount);
   const workspaceId = useWorkspaceId();
   const suggestedNumber = useQuery(
     api.invoiceBuilder.suggestInvoiceNumber,
@@ -114,7 +114,6 @@ function InvoiceBuilder() {
   const saved = useQuery(api.invoiceBuilder.getInvoice, invoiceId ? { id: invoiceId } : "skip");
   const buildInvoice = useAction(api.invoiceBuilder.buildInvoice);
   const saveInvoice = useMutation(api.invoiceBuilder.saveInvoice);
-  const generateLineItems = useAction(api.invoiceGenerator.generateLineItems);
 
   const [fields, setFields] = useState({
     name: "",
@@ -128,6 +127,9 @@ function InvoiceBuilder() {
   });
   const [invoiceDate, setInvoiceDate] = useState(todayInputValue);
   const [rows, setRows] = useState<LineItemRow[]>(() => [createLineItemRow(), createProfitRow()]);
+  const [revisionDocuments, setRevisionDocuments] = useState<Pick<VerifiedData,
+    "waiverIds" | "specSheetIds" | "jobSpecificIds"
+  >>({});
   const [numberHydrated, setNumberHydrated] = useState(false);
   // Cached build result; cleared whenever any form field changes so the next
   // action builds a fresh PDF.
@@ -138,19 +140,14 @@ function InvoiceBuilder() {
   const [savedHydrated, setSavedHydrated] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pendingNav, setPendingNav] = useState<PendingNav | null>(null);
-  const [aiOpen, setAiOpen] = useState(false);
-  const [aiDescription, setAiDescription] = useState("");
-  const [aiGenerating, setAiGenerating] = useState(false);
-  const [aiNotes, setAiNotes] = useState<string[]>([]);
-  const [pendingAiRows, setPendingAiRows] = useState<LineItemRow[] | null>(null);
-  const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<{ stop: () => void } | null>(null);
-  const voiceBaseTextRef = useRef("");
+  const [bundlePickerOpen, setBundlePickerOpen] = useState(false);
+  const [saveBundleOpen, setSaveBundleOpen] = useState(false);
+  const [appliedBundleIds, setAppliedBundleIds] = useState<Id<"bundles">[]>([]);
   // Incremented on every edit; a save only clears `dirty` if no edits landed
   // while the save request was in flight.
   const editVersion = useRef(0);
+  const persistedInvoiceId = useRef<Id<"invoices"> | null>(invoiceId);
   const [autoSaveQueued, setAutoSaveQueued] = useState(false);
-  const lineItemsCardRef = useRef<HTMLDivElement>(null);
 
   // While the form has unsaved changes, intercept clicks on internal links
   // (including the app header) and confirm before navigating away.
@@ -179,6 +176,32 @@ function InvoiceBuilder() {
   }, [suggestedNumber, numberHydrated]);
 
   useEffect(() => {
+    if (invoiceId) return;
+    const revision = consumeInvoiceRevisionDraft(workspaceId);
+    if (!revision) return;
+    const { data } = revision;
+    setFields({
+      name: data.name,
+      street: data.street,
+      city: data.city,
+      state: data.state,
+      zip: data.zip,
+      phone: data.phone,
+      invoiceNumber: data.invoiceNumber,
+      caseNumber: data.caseNumber,
+    });
+    if (revision.invoiceDate) setInvoiceDate(revision.invoiceDate);
+    setRows(savedLineItemsToRows(data.lineItems));
+    setRevisionDocuments({
+      waiverIds: data.waiverIds,
+      specSheetIds: data.specSheetIds,
+      jobSpecificIds: data.jobSpecificIds,
+    });
+    editVersion.current += 1;
+    setDirty(true);
+  }, [invoiceId, workspaceId]);
+
+  useEffect(() => {
     if (!invoiceId || savedHydrated) return;
     if (saved === null) {
       toast.error("That invoice no longer exists.");
@@ -186,21 +209,29 @@ function InvoiceBuilder() {
       return;
     }
     if (saved === undefined) return;
+    const revision = consumeInvoiceRevisionDraft(workspaceId, invoiceId);
+    const data = revision?.data ?? saved;
     setFields({
-      name: saved.name,
-      street: saved.street,
-      city: saved.city,
-      state: saved.state,
-      zip: saved.zip,
-      phone: saved.phone,
-      invoiceNumber: saved.invoiceNumber,
-      caseNumber: saved.caseNumber,
+      name: data.name,
+      street: data.street,
+      city: data.city,
+      state: data.state,
+      zip: data.zip,
+      phone: data.phone,
+      invoiceNumber: data.invoiceNumber,
+      caseNumber: data.caseNumber,
     });
-    setInvoiceDate(saved.invoiceDate);
-    setRows(savedLineItemsToRows(saved.lineItems));
-    setDirty(false);
+    setInvoiceDate(revision?.invoiceDate ?? saved.invoiceDate);
+    setRows(savedLineItemsToRows(data.lineItems));
+    setRevisionDocuments({
+      waiverIds: data.waiverIds ?? [],
+      specSheetIds: data.specSheetIds ?? [],
+      jobSpecificIds: data.jobSpecificIds ?? [],
+    });
+    if (revision) editVersion.current += 1;
+    setDirty(Boolean(revision));
     setSavedHydrated(true);
-  }, [invoiceId, saved, savedHydrated, router]);
+  }, [invoiceId, saved, savedHydrated, router, workspaceId]);
 
   const markChanged = () => {
     editVersion.current += 1;
@@ -222,7 +253,7 @@ function InvoiceBuilder() {
   const profitRow = rows[rows.length - 1]!;
   const regularSubtotal = regularRows.reduce((sum, row) => sum + lineItemRowAmount(row), 0);
   const profitPct = parseFloat(profitRow.qty) || 0;
-  const profitAmount = regularSubtotal * (profitPct / 100);
+  const profitAmount = Math.round(regularSubtotal * profitPct) / 100;
   const total = regularSubtotal + profitAmount;
 
   const canBuild =
@@ -239,7 +270,7 @@ function InvoiceBuilder() {
     );
     const regularSubtotal = filteredRegular.reduce((sum, row) => sum + lineItemRowAmount(row), 0);
     const profitPct = parseFloat(profitRow.qty) || 0;
-    const profitAmount = regularSubtotal * (profitPct / 100);
+    const profitAmount = Math.round(regularSubtotal * profitPct) / 100;
 
     return {
       name: fields.name,
@@ -250,6 +281,7 @@ function InvoiceBuilder() {
       phone: fields.phone,
       invoiceNumber: fields.invoiceNumber,
       caseNumber: fields.caseNumber.trim(),
+      ...revisionDocuments,
       lineItems: [
         ...filteredRegular.map((row) => ({
           description: row.description,
@@ -271,7 +303,9 @@ function InvoiceBuilder() {
     if (built) return built;
     const data = toVerifiedData();
     const result = await buildInvoice({
-      ...data,
+      name: data.name, street: data.street, city: data.city, state: data.state,
+      zip: data.zip, phone: data.phone, invoiceNumber: data.invoiceNumber,
+      caseNumber: data.caseNumber, lineItems: data.lineItems,
       invoiceDate: formatDisplayDate(invoiceDate),
     });
     setBuilt(result);
@@ -289,8 +323,9 @@ function InvoiceBuilder() {
       const id = await saveInvoice({
         ...data,
         invoiceDate,
-        id: invoiceId ?? undefined,
+        id: invoiceId ?? persistedInvoiceId.current ?? undefined,
       });
+      persistedInvoiceId.current = id;
       if (!invoiceId) {
         // Keep the association across refreshes; subsequent saves update this record.
         setSavedHydrated(true);
@@ -332,7 +367,12 @@ function InvoiceBuilder() {
     setPending("start");
     try {
       const { storageId } = await ensureBuilt();
-      writeInvoiceDraft(workspaceId, { invoiceStorageId: storageId, data: toVerifiedData() });
+      writeInvoiceDraft(workspaceId, {
+        invoiceStorageId: storageId,
+        data: { ...toVerifiedData(), ...revisionDocuments },
+        invoiceId: invoiceId ?? persistedInvoiceId.current ?? undefined,
+        invoiceDate,
+      });
       router.push("/new-packet");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not build the invoice.");
@@ -348,114 +388,18 @@ function InvoiceBuilder() {
     void startPacket();
   };
 
-  // Stop recognition when the drawer closes so it doesn't run in the background.
-  useEffect(() => {
-    if (!aiOpen && recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
-  }, [aiOpen]);
-
-  // Ensure recognition is stopped if the component unmounts.
-  useEffect(() => {
-    return () => {
-      recognitionRef.current?.stop();
-    };
-  }, []);
-
-  const toggleVoice = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      return;
-    }
-    const w = window as unknown as Record<string, unknown>;
-    const SpeechRecognitionAPI = (w["SpeechRecognition"] ?? w["webkitSpeechRecognition"]) as
-      | (new () => {
-          continuous: boolean;
-          interimResults: boolean;
-          lang: string;
-          onresult: ((e: { results: { [i: number]: { [i: number]: { transcript: string } } } }) => void) | null;
-          onend: (() => void) | null;
-          onerror: ((e: { error: string }) => void) | null;
-          start: () => void;
-          stop: () => void;
-        })
-      | undefined;
-    if (!SpeechRecognitionAPI) {
-      toast.error("Voice input is not supported in this browser.");
-      return;
-    }
-    voiceBaseTextRef.current = aiDescription.trimEnd();
-    const recognition = new SpeechRecognitionAPI();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognition.onresult = (event) => {
-      let transcript = "";
-      for (let i = 0; i < Object.keys(event.results).length; i++) {
-        transcript += event.results[i]![0]!.transcript;
-      }
-      const base = voiceBaseTextRef.current;
-      setAiDescription(base ? `${base} ${transcript}` : transcript);
-    };
-    recognition.onend = () => {
-      setIsListening(false);
-      recognitionRef.current = null;
-    };
-    recognition.onerror = (event) => {
-      if (event.error !== "no-speech") {
-        toast.error("Voice input stopped. Please try again.");
-      }
-      setIsListening(false);
-      recognitionRef.current = null;
-    };
-    recognitionRef.current = recognition;
-    recognition.start();
-    setIsListening(true);
-  };
-
-  const handleGenerate = async () => {
-    if (aiGenerating || !aiDescription.trim()) return;
-    setAiGenerating(true);
-    try {
-      const result = await generateLineItems({ description: aiDescription });
-      setAiNotes(result.notes);
-      if (result.items.length === 0) return;
-      const newRows: LineItemRow[] = result.items.map((item) => ({
-        id: crypto.randomUUID(),
-        description: item.description,
-        qty: String(item.qty),
-        unitPrice: String(item.unitPrice),
-        isEstimate: item.isEstimate,
-      }));
-      const hasRows = regularRows.some(
-        (row) => row.description.trim() !== "" || lineItemRowAmount(row) > 0,
-      );
-      if (hasRows) {
-        setPendingAiRows(newRows);
-      } else {
-        setRows([...newRows, profitRow]);
-        markChanged();
-        scrollToLineItems();
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not generate line items.");
-    } finally {
-      setAiGenerating(false);
-    }
-  };
-
-  const scrollToLineItems = () => {
-    setTimeout(() => {
-      lineItemsCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 50);
-  };
-
-  const confirmReplaceRows = () => {
-    if (!pendingAiRows) return;
-    setRows([...pendingAiRows, profitRow]);
+  const applyBundle = (bundleId: Id<"bundles">, bundleRows: LineItemRow[], documents: {
+    documentId: Id<"customDocuments">; category: "waiver" | "spec-sheet" | "job-specific";
+  }[]) => {
+    const current = rows.slice(0, -1).filter(row => row.description.trim() || lineItemRowAmount(row) > 0);
+    setRows([...current, ...bundleRows, rows[rows.length - 1]!]);
+    setRevisionDocuments(previous => ({
+      waiverIds: [...new Set([...(previous.waiverIds ?? []), ...documents.filter(doc => doc.category === "waiver").map(doc => doc.documentId)])],
+      specSheetIds: [...new Set([...(previous.specSheetIds ?? []), ...documents.filter(doc => doc.category === "spec-sheet").map(doc => doc.documentId)])],
+      jobSpecificIds: [...new Set([...(previous.jobSpecificIds ?? []), ...documents.filter(doc => doc.category === "job-specific").map(doc => doc.documentId)])],
+    }));
+    setAppliedBundleIds(previous => [...previous, bundleId]);
     markChanged();
-    setPendingAiRows(null);
-    scrollToLineItems();
   };
 
   const confirmLeave = () => {
@@ -514,9 +458,9 @@ function InvoiceBuilder() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Link href="/catalog" className={buttonVariants({ variant: "outline", size: "lg" })}>
+          <Link href="/bundles" className={buttonVariants({ variant: "outline", size: "lg" })}>
             <BookOpenIcon data-icon="inline-start" />
-            Catalog
+            Bundles
           </Link>
           <Link href="/invoices" className={buttonVariants({ variant: "outline", size: "lg" })}>
             <FilesIcon data-icon="inline-start" />
@@ -532,7 +476,6 @@ function InvoiceBuilder() {
         }}
       >
         <div className="min-w-0 space-y-6">
-          {/* Generate with AI card — disabled pending further testing */}
 
           <Card>
             <CardHeader>
@@ -628,27 +571,12 @@ function InvoiceBuilder() {
             </CardContent>
           </Card>
 
-          {aiNotes.length > 0 && (
-            <div className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-400">
-              <div className="flex-1 space-y-0.5">
-                {aiNotes.map((note, i) => (
-                  <p key={i}>{note}</p>
-                ))}
-              </div>
-              <button
-                type="button"
-                aria-label="Dismiss notes"
-                onClick={() => setAiNotes([])}
-                className="mt-0.5 shrink-0 opacity-60 hover:opacity-100"
-              >
-                <XIcon className="size-3.5" />
-              </button>
-            </div>
-          )}
-
-          <Card ref={lineItemsCardRef}>
+          <Card>
             <CardHeader>
-              <CardTitle>Line Items</CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle>Line Items</CardTitle>
+                <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setBundlePickerOpen(true)}><PlusIcon data-icon="inline-start" /> Add Bundle</Button><Button size="sm" variant="outline" onClick={() => setSaveBundleOpen(true)}>Save as Bundle</Button></div>
+              </div>
             </CardHeader>
             <CardContent>
               <LineItemsEditor rows={rows} onChange={handleRowsChange} />
@@ -663,20 +591,20 @@ function InvoiceBuilder() {
             </CardHeader>
             <CardContent className="space-y-4">
               {(() => {
-                const band = grantBand(total);
+                const band = grantBand(total, maximumInvoiceAmount);
                 if (band === "under") {
                   return (
                     <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                      Invoice is under {formatCurrency(MIN_TARGET_AMOUNT)}. Target between{" "}
-                      {formatCurrency(MIN_TARGET_AMOUNT)} and {formatCurrency(MAX_GRANT_AMOUNT)}.
+                      Invoice is under {formatCurrency(minimumTargetAmount)}. Target between{" "}
+                      {formatCurrency(minimumTargetAmount)} and {formatCurrency(maximumInvoiceAmount)}.
                     </div>
                   );
                 }
                 if (band === "over") {
                   return (
                     <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400">
-                      Exceeds the {formatCurrency(MAX_GRANT_AMOUNT)} SAH grant maximum by{" "}
-                      {formatCurrency(total - MAX_GRANT_AMOUNT)}.
+                      Exceeds the {formatCurrency(maximumInvoiceAmount)} invoice maximum by{" "}
+                      {formatCurrency(total - maximumInvoiceAmount)}.
                     </div>
                   );
                 }
@@ -704,19 +632,19 @@ function InvoiceBuilder() {
                   <dd className="font-mono tabular-nums">{formatCurrency(total)}</dd>
                 </div>
 
-                {total >= MAX_GRANT_AMOUNT && (
+                {total > maximumInvoiceAmount && (
                   <div className="flex justify-between gap-2 text-red-600 dark:text-red-400">
                     <dt>Over by</dt>
                     <dd className="font-mono tabular-nums">
-                      {formatCurrency(total - MAX_GRANT_AMOUNT)}
+                      {formatCurrency(total - maximumInvoiceAmount)}
                     </dd>
                   </div>
                 )}
-                {total < MIN_TARGET_AMOUNT && total > 0 && (
+                {total < minimumTargetAmount && total > 0 && (
                   <div className="flex justify-between gap-2 text-amber-600 dark:text-amber-400">
                     <dt>Under by</dt>
                     <dd className="font-mono tabular-nums">
-                      {formatCurrency(MIN_TARGET_AMOUNT - total)}
+                      {formatCurrency(minimumTargetAmount - total)}
                     </dd>
                   </div>
                 )}
@@ -750,14 +678,8 @@ function InvoiceBuilder() {
         onCancel={() => setPendingNav(null)}
       />
 
-      <ConfirmDialog
-        open={pendingAiRows !== null}
-        title="Replace current line items?"
-        description="This will replace your existing line items with the AI-generated ones. This cannot be undone."
-        confirmLabel="Replace"
-        onConfirm={confirmReplaceRows}
-        onCancel={() => setPendingAiRows(null)}
-      />
+      <BundlePicker open={bundlePickerOpen} onClose={() => setBundlePickerOpen(false)} onApply={applyBundle} currentSubtotal={regularSubtotal} profitPct={profitPct} currentItemCount={regularRows.filter(row => row.description.trim() || lineItemRowAmount(row) > 0).length} currentDocumentIds={[...(revisionDocuments.waiverIds ?? []), ...(revisionDocuments.specSheetIds ?? []), ...(revisionDocuments.jobSpecificIds ?? [])]} appliedIds={appliedBundleIds} />
+      <SaveAsBundle open={saveBundleOpen} onClose={() => setSaveBundleOpen(false)} rows={regularRows} documents={revisionDocuments} />
     </div>
   );
 }

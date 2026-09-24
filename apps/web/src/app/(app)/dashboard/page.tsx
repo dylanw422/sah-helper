@@ -62,9 +62,14 @@ export default function DashboardPage() {
   const completionPct = counts.all === 0 ? 0 : Math.round((counts.complete / counts.all) * 100);
 
   const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
     return (clients ?? []).filter((client) => {
       if (filter !== "all" && client.status !== filter) return false;
-      if (search && !client.name.toLowerCase().includes(search.toLowerCase())) return false;
+      if (term && ![
+        client.name,
+        `${client.street}, ${client.city}, ${client.state} ${client.zip}`,
+        client.caseNumber ?? "",
+      ].some((value) => value.toLowerCase().includes(term))) return false;
       return true;
     });
   }, [clients, filter, search]);
@@ -185,7 +190,8 @@ export default function DashboardPage() {
         <div className="relative w-full sm:w-64">
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search clients..."
+            placeholder="Search clients"
+            aria-label="Search clients by name, address, or case number"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-8"

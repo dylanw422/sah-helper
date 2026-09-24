@@ -47,12 +47,24 @@ export const generatePacket = action({
     waiverIds: v.array(v.id("customDocuments")),
     specSheetIds: v.array(v.id("customDocuments")),
     jobSpecificIds: v.array(v.id("customDocuments")),
+    replaceClientId: v.optional(v.id("clients")),
   },
   handler: async (
     ctx,
     args,
   ): Promise<{ clientId: Id<"clients">; packetStorageId: Id<"_storage"> }> => {
     const workspaceId = await requireAuth(ctx);
+    const selectedIds = [...args.waiverIds, ...args.specSheetIds, ...args.jobSpecificIds];
+    if (selectedIds.length > 50 || new Set(selectedIds).size !== selectedIds.length)
+      throw new Error("Select at most 50 unique supporting documents.");
+    const existingClient = await ctx.runQuery(api.clients.findExistingForPacket, {
+      name: args.name,
+      street: args.street,
+      caseNumber: args.caseNumber,
+    });
+    if ((existingClient?.id ?? null) !== (args.replaceClientId ?? null)) {
+      throw new Error("The existing client changed. Review and confirm the replacement again.");
+    }
     await ctx.runQuery(internal.uploads.checkFile, {
       storageId: args.invoiceStorageId,
     });
@@ -321,6 +333,10 @@ export const generatePacket = action({
       );
       if (!selected)
         throw new Error(`Selected document no longer exists: ${id}`);
+      const expectedCategory = args.waiverIds.includes(id) ? "waiver"
+        : args.specSheetIds.includes(id) ? "spec-sheet" : "job-specific";
+      if (selected.category !== expectedCategory)
+        throw new Error(`Selected document is no longer available in ${expectedCategory}: ${selected.displayName}`);
       const blob = await ctx.storage.get(selected.storageId);
       if (!blob)
         throw new Error(
@@ -351,8 +367,9 @@ export const generatePacket = action({
     const packetStorageId = await storeBytes(mergedBytes);
 
     const clientId: Id<"clients"> = await ctx.runMutation(
-      api.clients.createClient,
+      internal.clients.saveGeneratedPacket,
       {
+        replaceClientId: args.replaceClientId,
         name: args.name,
         street: args.street,
         city: args.city,
@@ -366,20 +383,12 @@ export const generatePacket = action({
         subtotal,
         total,
         packetStorageId,
+        files: entries.map((entry) => ({
+          storageId: entry.storageId,
+          filename: entry.filename,
+        })),
       },
     );
-
-    // Register each stored document with the file drawer so it can list and
-    // re-merge them later. Storage was already done during the build phase.
-    for (let i = 0; i < entries.length; i++) {
-      await ctx.runMutation(api.clientFiles.addClientFile, {
-        clientId,
-        storageId: entries[i].storageId,
-        filename: entries[i].filename,
-        type: "generated",
-        order: i,
-      });
-    }
 
     return { clientId, packetStorageId };
   },

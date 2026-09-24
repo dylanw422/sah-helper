@@ -61,19 +61,21 @@ function isProfitRow(row: { description: string }): boolean {
 function rowAmount(row: EditableLineItem): number {
   const qty = parseFloat(row.qty) || 0;
   const unitPrice = parseFloat(row.unitPrice) || 0;
-  return qty * unitPrice;
+  return Math.round(qty * unitPrice * 100) / 100;
 }
 
 export function VerifyStep({
   initial,
   drawCount,
   totalMismatchWarning,
+  checkingExisting = false,
   onBack,
   onGenerate,
 }: {
   initial: VerifiedData;
   drawCount: DrawCount;
   totalMismatchWarning: boolean;
+  checkingExisting?: boolean;
   onBack: () => void;
   onGenerate: (data: VerifiedData) => void;
 }) {
@@ -98,12 +100,14 @@ export function VerifyStep({
   const waivers = (customDocs ?? []).filter((d) => d.category === "waiver");
   const specSheets = (customDocs ?? []).filter((d) => d.category === "spec-sheet");
   const jobSpecificDocs = (customDocs ?? []).filter((d) => d.category === "job-specific");
-  const [selectedWaivers, setSelectedWaivers] = useState<Set<Id<"customDocuments">>>(new Set());
+  const [selectedWaivers, setSelectedWaivers] = useState<Set<Id<"customDocuments">>>(
+    () => new Set(initial.waiverIds ?? []),
+  );
   const [selectedSpecSheets, setSelectedSpecSheets] = useState<Set<Id<"customDocuments">>>(
-    new Set(),
+    () => new Set(initial.specSheetIds ?? []),
   );
   const [selectedJobSpecific, setSelectedJobSpecific] = useState<Set<Id<"customDocuments">>>(
-    new Set(),
+    () => new Set(initial.jobSpecificIds ?? []),
   );
 
   // Profit rows store a percentage in qty; their amount derives from the
@@ -113,7 +117,9 @@ export function VerifyStep({
     0,
   );
   const amountFor = (row: EditableLineItem): number =>
-    isProfitRow(row) ? regularSubtotal * ((parseFloat(row.qty) || 0) / 100) : rowAmount(row);
+    isProfitRow(row) ? Math.round(regularSubtotal * (parseFloat(row.qty) || 0)) / 100 : rowAmount(row);
+  const selectedDocumentIds = [...selectedWaivers, ...selectedSpecSheets, ...selectedJobSpecific];
+  const missingSelected = customDocs === undefined ? [] : selectedDocumentIds.filter(id => !customDocs.some(doc => doc._id === id));
   const total = rows.reduce((sum, row) => sum + amountFor(row), 0);
   // The final draw is a 20% holdback of the contract total.
   const holdback = total * 0.2;
@@ -241,6 +247,7 @@ export function VerifyStep({
           </CardContent>
         </Card>
 
+        {missingSelected.length > 0 && <Card><CardContent className="space-y-2 py-4"><p className="text-xs font-medium text-amber-600">Some previously selected documents are no longer available. Remove them before generating the packet.</p>{missingSelected.map(id => <button key={id} type="button" className="block text-xs underline" onClick={() => { setSelectedWaivers(current => new Set([...current].filter(value => value !== id))); setSelectedSpecSheets(current => new Set([...current].filter(value => value !== id))); setSelectedJobSpecific(current => new Set([...current].filter(value => value !== id))); }}>Remove unavailable document {id}</button>)}</CardContent></Card>}
         {waivers.length > 0 && (
           <DocumentSelectCard
             title="Waivers"
@@ -384,8 +391,8 @@ export function VerifyStep({
           <ArrowLeftIcon data-icon="inline-start" />
           Back
         </Button>
-        <Button size="lg" disabled={!canGenerate} onClick={handleGenerate}>
-          Looks Good — Generate Packet
+        <Button size="lg" disabled={!canGenerate || checkingExisting || customDocs === undefined || missingSelected.length > 0} onClick={handleGenerate}>
+          {checkingExisting ? "Checking client..." : "Looks Good — Generate Packet"}
         </Button>
       </div>
     </div>

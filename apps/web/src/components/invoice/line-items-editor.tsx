@@ -19,7 +19,6 @@ export type LineItemRow = {
   description: string;
   qty: string;
   unitPrice: string;
-  isEstimate?: boolean;
 };
 
 export const PROFIT_DESCRIPTION = "Profit";
@@ -35,7 +34,7 @@ export function createProfitRow(): LineItemRow {
 export function lineItemRowAmount(row: LineItemRow): number {
   const qty = parseFloat(row.qty) || 0;
   const unitPrice = parseFloat(row.unitPrice) || 0;
-  return qty * unitPrice;
+  return Math.round(qty * unitPrice * 100) / 100;
 }
 
 const GRID_COLS =
@@ -53,15 +52,14 @@ export function LineItemsEditor({
   const profitRow = rows[rows.length - 1]!;
   const regularSubtotal = regularRows.reduce((sum, row) => sum + lineItemRowAmount(row), 0);
   const profitPct = parseFloat(profitRow.qty) || 0;
-  const profitAmount = regularSubtotal * (profitPct / 100);
+  const profitAmount = Math.round(regularSubtotal * profitPct) / 100;
   const total = regularSubtotal + profitAmount;
 
   // ID of the row whose description input should receive focus on next render.
   const [focusId, setFocusId] = useState<string | null>(null);
 
   const setRow = (id: string, patch: Partial<LineItemRow>) =>
-    // Editing any field clears the estimate flag for that row.
-    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch, isEstimate: undefined } : row)));
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
 
   const moveRow = (id: string, dir: -1 | 1) => {
     const i = regularRows.findIndex((row) => row.id === id);
@@ -180,7 +178,7 @@ function LineItemRowView({
   count: number;
   focusDescription: boolean;
   onFocused: () => void;
-  onPatch: (patch: Partial<Omit<LineItemRow, "isEstimate">>) => void;
+  onPatch: (patch: Partial<LineItemRow>) => void;
   onMove: (dir: -1 | 1) => void;
   onDelete: () => void;
   onAddRow: () => void;
@@ -228,13 +226,7 @@ function LineItemRowView({
             onPatch({ description: v.length > 0 ? v[0]!.toUpperCase() + v.slice(1) : v });
           }}
           placeholder="Description"
-          className={row.isEstimate ? "pr-12" : undefined}
         />
-        {row.isEstimate && (
-          <span className="pointer-events-none absolute right-1.5 rounded-sm bg-amber-500/15 px-1 py-0.5 text-[9px] font-medium text-amber-600 dark:text-amber-400">
-            est.
-          </span>
-        )}
       </div>
       <Input
         type="number"

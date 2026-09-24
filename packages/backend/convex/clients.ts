@@ -1,11 +1,135 @@
 import { requireFile } from "./lib/files";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
-import { mutation, query } from "./_generated/server";
-import { syncSource } from "./catalog";
+import { internalMutation, mutation, query } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
 import { assertWorkspace } from "./lib/workspaces";
 import { lineItemValidator } from "./schema";
+
+function normalized(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+async function matchingPacketClient(
+  ctx: QueryCtx | MutationCtx,
+  workspaceId: Id<"workspaces"> | undefined,
+  input: { name: string; street: string; caseNumber: string },
+): Promise<Doc<"clients"> | null> {
+  const caseNumber = normalized(input.caseNumber);
+  const name = normalized(input.name);
+  const street = normalized(input.street);
+  let addressMatch: Doc<"clients"> | null = null;
+  for await (const client of ctx.db.query("clients").withIndex("by_workspaceId", (q) =>
+    q.eq("workspaceId", workspaceId),
+  )) {
+    if (caseNumber && normalized(client.caseNumber ?? "") === caseNumber) return client;
+    if (name && street && normalized(client.name) === name && normalized(client.street) === street) {
+      addressMatch = client;
+    }
+  }
+  return addressMatch;
+}
+
+export const findExistingForPacket = query({
+  args: { name: v.string(), street: v.string(), caseNumber: v.string() },
+  handler: async (ctx, args) => {
+    const workspaceId = await requireAuth(ctx);
+    const client = await matchingPacketClient(ctx, workspaceId, args);
+    return client ? { id: client._id, name: client.name } : null;
+  },
+});
+
+export const saveGeneratedPacket = internalMutation({
+  args: {
+    replaceClientId: v.optional(v.id("clients")),
+    name: v.string(),
+    street: v.string(),
+    city: v.string(),
+    state: v.string(),
+    zip: v.string(),
+    phone: v.string(),
+    invoiceNumber: v.string(),
+    caseNumber: v.string(),
+    drawCount: v.union(v.literal(4), v.literal(5), v.literal(6)),
+    lineItems: v.array(lineItemValidator),
+    subtotal: v.number(),
+    total: v.number(),
+    packetStorageId: v.id("_storage"),
+    files: v.array(v.object({
+      storageId: v.id("_storage"),
+      filename: v.string(),
+    })),
+  },
+  handler: async (ctx, { replaceClientId, files, ...data }) => {
+    const workspaceId = await requireAuth(ctx);
+    await requireFile(ctx, data.packetStorageId, workspaceId);
+    for (const file of files) await requireFile(ctx, file.storageId, workspaceId);
+
+    const existing = await matchingPacketClient(ctx, workspaceId, data);
+    if ((existing?._id ?? null) !== (replaceClientId ?? null)) {
+      throw new ConvexError("The existing client changed. Review and confirm the replacement again.");
+    }
+
+    const now = Date.now();
+    let clientId: Id<"clients">;
+    if (existing) {
+      const oldFiles = await ctx.db.query("clientFiles")
+        .withIndex("by_workspaceId_and_clientId", (q) =>
+          q.eq("workspaceId", workspaceId).eq("clientId", existing._id),
+        ).take(201);
+      if (oldFiles.length > 200) throw new ConvexError("Too many files to replace in one packet.");
+      const reusedIds = new Set(files.map((file) => file.storageId));
+      const retiredIds = new Set<Id<"_storage">>();
+      for (const file of oldFiles) {
+        if (!reusedIds.has(file.storageId) && file.storageId !== data.packetStorageId) {
+          retiredIds.add(file.storageId);
+        }
+        await ctx.db.delete(file._id);
+      }
+      if (existing.packetStorageId && existing.packetStorageId !== data.packetStorageId &&
+          !reusedIds.has(existing.packetStorageId)) {
+        retiredIds.add(existing.packetStorageId);
+      }
+      for (const storageId of retiredIds) {
+        await ctx.storage.delete(storageId);
+        const ownership = await ctx.db.query("workspaceFiles")
+          .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
+          .unique();
+        if (ownership) await ctx.db.delete(ownership._id);
+      }
+      await ctx.db.patch(existing._id, {
+        ...data,
+        status: "unsigned",
+        packetDirty: false,
+        updatedAt: now,
+      });
+      clientId = existing._id;
+    } else {
+      clientId = await ctx.db.insert("clients", {
+        workspaceId,
+        ...data,
+        status: "unsigned",
+        packetDirty: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    for (let order = 0; order < files.length; order++) {
+      await ctx.db.insert("clientFiles", {
+        workspaceId,
+        clientId,
+        ...files[order],
+        type: "generated",
+        order,
+        addedAt: now,
+      });
+    }
+    return clientId;
+  },
+});
 
 export const listClients = query({
   args: {},
@@ -137,13 +261,6 @@ export const createClient = mutation({
       status: "unsigned",
       createdAt: now,
       updatedAt: now,
-    });
-    await syncSource(ctx, {
-      workspaceId,
-      sourceType: "client",
-      sourceId: clientId,
-      observedAt: now,
-      lineItems: args.lineItems,
     });
     return clientId;
   },
