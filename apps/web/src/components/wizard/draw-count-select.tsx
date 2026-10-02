@@ -24,7 +24,6 @@ export function DrawCountSelect({
       </option>
       <option value="4">4 Draws</option>
       <option value="5">5 Draws</option>
-      <option value="6">6 Draws</option>
     </NativeSelect>
   );
 }

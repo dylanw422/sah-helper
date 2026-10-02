@@ -188,7 +188,7 @@ export function TemplatesTab() {
   };
 
   const addButton = (category: Category) => (
-    <div className="flex justify-end border-t border-border px-3 py-2">
+    <div className="flex justify-end border-t border-border bg-surface-overlay/40 px-4 py-3">
       <Button
         variant="outline"
         size="xs"
@@ -211,18 +211,20 @@ export function TemplatesTab() {
     );
 
   const immutableSection = (title: string, docs: Doc<"customDocuments">[], category: Category) => (
-    <div className="mb-6">
-      <h2 className="mb-2 text-sm font-semibold">{title}</h2>
-      <p className="mb-3 text-xs text-muted-foreground">
-        Shared across all workspaces. Documents can be removed by the workspace that uploaded them.
-      </p>
-      <div className="border border-border">
+    <section className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+      <div className="border-b border-border px-5 py-4">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Shared across workspaces. The uploading workspace can remove its documents.
+        </p>
+      </div>
+      <div>
         {docs.length === 0 ? (
           <p className="px-3 py-3 text-xs text-muted-foreground">
             No {title.toLowerCase()} uploaded yet.
           </p>
         ) : (
-          <Table>
+          <Table className="min-w-[560px]">
             <TableHeader>
               <TableRow>
                 <TableHead>File</TableHead>
@@ -261,11 +263,11 @@ export function TemplatesTab() {
         )}
         {addButton(category)}
       </div>
-    </div>
+    </section>
   );
 
   return (
-    <div>
+    <div className="space-y-5">
       <input
         ref={fileInputRef}
         type="file"
@@ -282,10 +284,15 @@ export function TemplatesTab() {
         }}
       />
 
-      <div className="mb-6">
-        <h2 className="mb-2 text-sm font-semibold">Contracts</h2>
-        <div className="border border-border">
-          <Table>
+      <section className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+        <div className="border-b border-border px-5 py-4">
+          <h3 className="text-sm font-semibold">Contracts</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Upload blank VA templates or custom contracts. Fields are mapped automatically; use Inspect to review them.
+          </p>
+        </div>
+        <div>
+          <Table className="min-w-[650px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Template</TableHead>
@@ -365,14 +372,14 @@ export function TemplatesTab() {
           </Table>
           {addButton("contract")}
         </div>
-      </div>
+      </section>
 
       {immutableSection("Waivers", waivers, "waiver")}
       {immutableSection("Spec Sheets", specSheets, "spec-sheet")}
       {immutableSection("Job-Specific Documents", jobSpecificDocs, "job-specific")}
 
       {Object.keys(fields).length > 0 && (
-        <div className="space-y-6">
+        <div className="space-y-4 pt-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold">Enumerated Fields</h2>
             <Button variant="outline" size="sm" onClick={copyAll}>
@@ -383,8 +390,8 @@ export function TemplatesTab() {
           {Object.entries(fields).map(([key, list]) => {
             const fieldMap = fieldMapFor(key);
             return (
-              <div key={key} className="border border-border">
-                <div className="border-b bg-card px-3 py-2 font-mono text-[11px] font-medium">
+              <div key={key} className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+                <div className="border-b border-border px-5 py-3 font-mono text-xs font-medium">
                   {displayNameFor(key)} — {list.length} fields
                 </div>
                 <Table>

@@ -55,11 +55,16 @@ const EMPTY: SettingsForm = {
 
 type Tab = "contractor" | "users" | "templates";
 
+const TABS = [
+  { key: "contractor", label: "Contractor info", icon: BuildingIcon },
+  { key: "users", label: "Users", icon: UsersIcon },
+  { key: "templates", label: "Documents", icon: FileTextIcon },
+] as const;
+
 const TAB_DESCRIPTIONS: Record<Tab, string> = {
-  contractor: "Contractor information used to fill all VA documents.",
-  users: "Manage who can access your company's workspace.",
-  templates:
-    "Upload the 12 blank VA templates. Field mapping happens automatically on upload — AI matches each PDF's form fields to packet data. Use Inspect to review the result.",
+  contractor: "Keep the business details used throughout your packets up to date.",
+  users: "Invite teammates and manage access to your workspace.",
+  templates: "Manage the templates and supporting documents used in packets.",
 };
 
 export default function SettingsPage() {
@@ -67,69 +72,56 @@ export default function SettingsPage() {
   const workspace = useQuery(api.workspaces.current);
 
   return (
-    <div
-      className={`mx-auto w-full px-4 py-8 ${tab === "templates" ? "max-w-5xl" : "max-w-3xl"}`}
-    >
-      <Link
-        href="/dashboard"
-        className="mb-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeftIcon className="size-3.5" />
-        Back to Clients
-      </Link>
-
-      <h1 className="mb-1 text-xl font-semibold tracking-[-0.025em]">Settings</h1>
-      <p className="mb-8 text-xs text-muted-foreground">{TAB_DESCRIPTIONS[tab]}</p>
-
-      <div className="flex flex-col gap-8 sm:flex-row">
-        <nav className="flex shrink-0 gap-2 sm:w-44 sm:flex-col sm:gap-1.5">
-          <button
-            type="button"
-            onClick={() => setTab("contractor")}
-            className={`flex items-center gap-2.5 rounded-sm px-3 py-2 text-xs font-medium transition-colors ${
-              tab === "contractor"
-                ? "bg-accent text-indigo-700 ring-1 ring-[rgb(var(--accent-rgb)/0.25)] dark:text-indigo-300"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <BuildingIcon className="size-3.5" />
-            Contractor Info
-          </button>
-          {workspace?.role !== "member" ? <button
-            type="button"
-            onClick={() => setTab("users")}
-            className={`flex items-center gap-2.5 rounded-sm px-3 py-2 text-xs font-medium transition-colors ${
-              tab === "users"
-                ? "bg-accent text-indigo-700 ring-1 ring-[rgb(var(--accent-rgb)/0.25)] dark:text-indigo-300"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <UsersIcon className="size-3.5" />
-            Users
-          </button> : null}
-          <button
-            type="button"
-            onClick={() => setTab("templates")}
-            className={`flex items-center gap-2.5 rounded-sm px-3 py-2 text-xs font-medium transition-colors ${
-              tab === "templates"
-                ? "bg-accent text-indigo-700 ring-1 ring-[rgb(var(--accent-rgb)/0.25)] dark:text-indigo-300"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <FileTextIcon className="size-3.5" />
-            Documents
-          </button>
-        </nav>
-
-        <div className="min-w-0 flex-1">
-          {tab === "contractor" ? (
-            <ContractorTab />
-          ) : tab === "users" ? (
-            <UsersTab />
-          ) : (
-            <TemplatesTab />
-          )}
+    <div className="mx-auto w-full max-w-6xl px-4 pb-12 pt-7 sm:pt-10">
+      <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="mb-2 text-[10px] font-semibold tracking-[0.16em] text-indigo-600 uppercase dark:text-indigo-400">
+            Workspace preferences
+          </p>
+          <h1 className="text-3xl font-semibold tracking-[-0.045em] sm:text-[34px]">Settings</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Manage your company, team, and packet documents.
+          </p>
         </div>
+        <Link
+          href="/dashboard"
+          className="inline-flex h-10 w-fit items-center gap-2 rounded-lg border border-border bg-card px-4 text-sm font-medium transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ArrowLeftIcon className="size-4" aria-hidden="true" />
+          Back to clients
+        </Link>
+      </div>
+
+      <div className="mb-7 overflow-x-auto rounded-lg border border-border bg-card p-1 shadow-sm">
+        <nav className="flex min-w-max items-center gap-1" aria-label="Settings sections">
+          {TABS.filter(({ key }) => key !== "users" || workspace?.role !== "member").map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              aria-pressed={tab === key}
+              className={`inline-flex h-10 items-center gap-2 rounded-md px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                tab === key
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-surface-overlay hover:text-foreground"
+              }`}
+            >
+              <Icon className="size-4" aria-hidden="true" />
+              {label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      <div className="mb-5">
+        <h2 className="text-lg font-semibold tracking-[-0.03em]">
+          {TABS.find(({ key }) => key === tab)?.label}
+        </h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">{TAB_DESCRIPTIONS[tab]}</p>
+      </div>
+
+      <div className="min-w-0">
+        {tab === "contractor" ? <ContractorTab /> : tab === "users" ? <UsersTab /> : <TemplatesTab />}
       </div>
     </div>
   );
@@ -191,11 +183,11 @@ function ContractorTab() {
 
   if (settings === undefined) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4 rounded-lg border border-border bg-card p-6 shadow-sm">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="space-y-1.5">
             <Skeleton className="h-3 w-24" />
-            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-10 w-full" />
           </div>
         ))}
       </div>
@@ -203,77 +195,80 @@ function ContractorTab() {
   }
 
   return (
-    <div className="rounded-md border border-border bg-card p-5">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+      <div className="border-b border-border px-5 py-4 sm:px-6">
+        <h3 className="text-sm font-semibold">Business details</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">These details appear on generated documents.</p>
+      </div>
+      <div className="grid grid-cols-1 gap-x-5 gap-y-5 p-5 sm:grid-cols-2 sm:p-6">
         {FIELDS.map(({ key, label }) => (
           <div
             key={key}
             className={`space-y-1.5 ${key === "contractorCompanyName" || key === "contractorStreet" ? "sm:col-span-2" : ""}`}
           >
-            <Label
-              htmlFor={key}
-              className="text-[10px] font-medium tracking-[0.1em] text-muted-foreground/70 uppercase"
-            >
+            <Label htmlFor={key} className="text-xs font-medium text-foreground">
               {label}
             </Label>
             <Input
               id={key}
               value={form[key]}
               onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+              className="h-10 rounded-lg bg-background"
             />
           </div>
         ))}
       </div>
 
-      <div className="mt-6 space-y-1.5 border-t border-border pt-5">
-        <Label htmlFor="maximumInvoiceAmount" className="text-[10px] font-medium tracking-[0.1em] text-muted-foreground/70 uppercase">
+      <div className="space-y-1.5 border-t border-border px-5 py-5 sm:px-6">
+        <Label htmlFor="maximumInvoiceAmount" className="text-xs font-medium text-foreground">
           Maximum Invoice Amount
         </Label>
-        <Input
-          id="maximumInvoiceAmount"
-          type="number"
-          min="0.01"
-          step="0.01"
-          value={maximumInvoiceAmount}
-          onChange={(e) => setMaximumInvoiceAmount(e.target.value)}
-        />
+        <div className="relative max-w-xs">
+          <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-muted-foreground">$</span>
+          <Input
+            id="maximumInvoiceAmount"
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={maximumInvoiceAmount}
+            onChange={(e) => setMaximumInvoiceAmount(e.target.value)}
+            className="h-10 rounded-lg bg-background pl-7"
+          />
+        </div>
         <p className="text-xs text-muted-foreground">
           Used for invoice warnings and AI generated estimates in this workspace.
         </p>
       </div>
 
-      <Button
-        className="mt-6 w-full sm:w-32"
-        size="lg"
-        onClick={handleSave}
-        disabled={saving || saved}
-      >
-        <AnimatePresence mode="wait" initial={false}>
-          {saved ? (
-            <motion.span
-              key="check"
-              initial={{ scale: 0.85, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.85, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 600, damping: 20 }}
-              className="flex items-center gap-1.5"
-            >
-              <CheckIcon className="size-4" />
-              Saved
-            </motion.span>
-          ) : (
-            <motion.span
-              key="save"
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.15 }}
-            >
-              {saving ? "Saving..." : "Save Changes"}
-            </motion.span>
-          )}
-        </AnimatePresence>
-      </Button>
+      <div className="flex justify-end border-t border-border bg-surface-overlay/40 px-5 py-4 sm:px-6">
+        <Button className="w-full rounded-lg sm:w-auto" size="lg" onClick={handleSave} disabled={saving || saved}>
+          <AnimatePresence mode="wait" initial={false}>
+            {saved ? (
+              <motion.span
+                key="check"
+                initial={{ scale: 0.85, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.85, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 600, damping: 20 }}
+                className="flex items-center gap-1.5"
+              >
+                <CheckIcon className="size-4" />
+                Saved
+              </motion.span>
+            ) : (
+              <motion.span
+                key="save"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.15 }}
+              >
+                {saving ? "Saving..." : "Save Changes"}
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </Button>
+      </div>
     </div>
   );
 }
@@ -330,17 +325,13 @@ function UsersTab() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-md border border-border bg-card p-5">
-        <p className="text-[10px] font-medium tracking-[0.1em] text-muted-foreground/70 uppercase mb-3">
-          Add User
-        </p>
-        <div className="space-y-2">
+    <div className="space-y-5">
+      <div className="rounded-lg border border-border bg-card p-5 shadow-sm sm:p-6">
+        <h3 className="text-sm font-semibold">Invite a teammate</h3>
+        <p className="mt-0.5 mb-5 text-xs text-muted-foreground">They can sign in using a one-time code.</p>
+        <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <Label
-              htmlFor="new-user-name"
-              className="text-[10px] font-medium tracking-[0.1em] text-muted-foreground/70 uppercase"
-            >
+            <Label htmlFor="new-user-name" className="text-xs font-medium text-foreground">
               Name
             </Label>
             <Input
@@ -349,37 +340,33 @@ function UsersTab() {
               placeholder="Jane Smith"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1.5"
+              className="mt-1.5 h-10 rounded-lg bg-background"
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleAdd();
               }}
             />
           </div>
           <div>
-            <Label
-              htmlFor="new-user-email"
-              className="text-[10px] font-medium tracking-[0.1em] text-muted-foreground/70 uppercase"
-            >
+            <Label htmlFor="new-user-email" className="text-xs font-medium text-foreground">
               Email
             </Label>
-            <div className="mt-1.5 flex gap-2">
-              <Input
-                id="new-user-email"
-                type="email"
-                placeholder="jane@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleAdd();
-                }}
-              />
-              <Button onClick={handleAdd} disabled={adding || !email.trim() || !name.trim()}>
-                <PlusIcon className="size-4" />
-                {adding ? "Adding..." : "Add"}
-              </Button>
-            </div>
+            <Input
+              id="new-user-email"
+              type="email"
+              placeholder="jane@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAdd();
+              }}
+              className="mt-1.5 h-10 rounded-lg bg-background"
+            />
           </div>
         </div>
+        <Button className="mt-5 rounded-lg" onClick={handleAdd} disabled={adding || !email.trim() || !name.trim()}>
+          <PlusIcon className="size-4" />
+          {adding ? "Adding..." : "Add user"}
+        </Button>
 
         <AnimatePresence>
           {newInvite && (
@@ -389,7 +376,7 @@ function UsersTab() {
               exit={{ opacity: 0, height: 0 }}
               className="overflow-hidden"
             >
-              <div className="mt-4 rounded-md border border-indigo-300 bg-accent p-4 text-center dark:border-indigo-800">
+              <div className="mt-5 rounded-lg border border-indigo-300 bg-accent p-4 text-center dark:border-indigo-800">
                 <p className="text-xs text-muted-foreground">
                   One-time sign-in code for <span className="font-medium">{newInvite.email}</span>
                 </p>
@@ -411,7 +398,13 @@ function UsersTab() {
         </AnimatePresence>
       </div>
 
-      <div className="rounded-md border border-border bg-card">
+      <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+        <div className="border-b border-border px-5 py-4 sm:px-6">
+          <h3 className="text-sm font-semibold">Workspace users</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {users === undefined ? "Loading users" : `${users.length} ${users.length === 1 ? "person" : "people"} with access`}
+          </p>
+        </div>
         {users === undefined ? (
           <div className="space-y-3 p-5">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -425,7 +418,7 @@ function UsersTab() {
         ) : (
           <ul className="divide-y divide-border">
             {users.map((user) => (
-              <li key={user._id} className="flex items-center justify-between gap-3 px-5 py-3">
+              <li key={user._id} className="flex items-center justify-between gap-3 px-5 py-4 transition-colors hover:bg-surface-overlay sm:px-6">
                 <div className="min-w-0">
                   {user.name && <p className="truncate text-sm font-medium">{user.name}</p>}
                   <p className="truncate text-sm text-muted-foreground">{user.email}</p>

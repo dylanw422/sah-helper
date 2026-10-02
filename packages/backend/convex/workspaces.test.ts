@@ -308,6 +308,62 @@ test("a confirmed packet replaces the same client and removes the old packet fil
   }
 });
 
+test("uploaded supporting documents are included when the packet is rebuilt", async () => {
+  const t = setup();
+  const a = await account(t, "packet-documents@example.com");
+  const workspaceId = await a.mutation(api.workspaces.create, company("Packet Documents"));
+
+  const pdfFile = async (label: string) => {
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([612, 792]);
+    page.drawText(label, { x: 40, y: 750 });
+    const bytes = await pdf.save();
+    const storageId = await t.run((ctx) =>
+      ctx.storage.store(new Blob([bytes as BlobPart], { type: "application/pdf" })),
+    );
+    await t.mutation(internal.uploads.registerGenerated, { storageId, workspaceId });
+    return storageId;
+  };
+
+  const originalPacketId = await pdfFile("Original packet");
+  const generatedId = await pdfFile("Generated contract");
+  const planId = await pdfFile("House plans");
+  const builderSpecId = await pdfFile("Builder spec sheet");
+  const additionalSpecId = await pdfFile("Additional spec sheet");
+  const { invoiceDate, ...clientData } = invoice;
+  const clientId = await a.mutation(api.clients.createClient, {
+    ...clientData,
+    drawCount: 4,
+    subtotal: 100,
+    total: 100,
+    packetStorageId: originalPacketId,
+  });
+  await a.mutation(api.clientFiles.addClientFile, {
+    clientId, storageId: generatedId, filename: "Contract.pdf", type: "generated",
+  });
+  for (const [storageId, filename] of [
+    [planId, "House plans.pdf"],
+    [builderSpecId, "Builder spec sheet.pdf"],
+    [additionalSpecId, "Additional spec sheet.pdf"],
+  ] as const) {
+    await a.mutation(api.clientFiles.addClientFile, {
+      clientId, storageId, filename, type: "uploaded",
+    });
+  }
+
+  expect((await a.query(api.clients.getClient, { clientId }))?.packetDirty).toBe(true);
+  const { packetStorageId } = await a.action(api.packets.regeneratePacket, { clientId });
+  expect((await a.query(api.clients.getClient, { clientId }))?.packetDirty).toBe(false);
+  expect((await a.query(api.clientFiles.listClientFiles, { clientId })).map((file) => file.filename))
+    .toEqual(["Contract.pdf", "House plans.pdf", "Builder spec sheet.pdf", "Additional spec sheet.pdf"]);
+  const mergedBytes = await t.run(async (ctx) =>
+    (await ctx.storage.get(packetStorageId))?.arrayBuffer() ?? null,
+  );
+  expect(mergedBytes).not.toBeNull();
+  const pdf = await PDFDocument.load(mergedBytes!);
+  expect(pdf.getPageCount()).toBe(4);
+});
+
 test("files cannot be parsed, attached, imported or registered in another workspace", async () => {
   const t = setup();
   const a = await account(t, "a@example.com");

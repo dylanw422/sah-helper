@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { AdditionalDocumentsStep } from "@/components/wizard/additional-documents-step";
 import { CompleteStep } from "@/components/wizard/complete-step";
 import { DrawCountSelect, type DrawCount } from "@/components/wizard/draw-count-select";
 import {
@@ -37,15 +38,15 @@ const EXTRACTION_STEPS = [
 const GENERATION_STEPS = [
   "Filling Construction Contract...",
   "Filling VA Addendum...",
-  "Filling Builder Spec Sheet...",
+  "Filling Lien Releases...",
   "Filling Scope of Work...",
   "Filling Payment Schedule...",
   "Merging documents...",
   "Saving to client record...",
-  "Packet ready!",
+  "Core packet ready!",
 ] as const;
 
-type WizardPhase = "upload" | "extracting" | "draw-count" | "verify" | "generating" | "complete";
+type WizardPhase = "upload" | "extracting" | "draw-count" | "verify" | "generating" | "documents" | "complete";
 
 type ExtractedData = VerifiedData & { totalMismatchWarning: boolean };
 
@@ -80,6 +81,7 @@ export default function NewPacketPage() {
   const [doneCount, setDoneCount] = useState(0);
   const [fromBuilder, setFromBuilder] = useState(false);
   const [checkingExisting, setCheckingExisting] = useState(false);
+  const [finalizingDocuments, setFinalizingDocuments] = useState(false);
   const [pendingReplacement, setPendingReplacement] = useState<{
     clientId: Id<"clients">;
     clientName: string;
@@ -92,6 +94,7 @@ export default function NewPacketPage() {
   const generateUploadUrl = useMutation(api.uploads.generateUploadUrl);
   const parseInvoice = useAction(api.invoices.parseInvoice);
   const generatePacket = useAction(api.packets.generatePacket);
+  const regeneratePacket = useAction(api.packets.regeneratePacket);
   const buildInvoice = useAction(api.invoiceBuilder.buildInvoice);
   const updateInvoiceDocuments = useMutation(api.invoiceBuilder.updateInvoiceDocuments);
 
@@ -278,7 +281,7 @@ export default function NewPacketPage() {
             clientName: data.name,
             total: data.lineItems.reduce((sum, item) => sum + item.amount, 0),
           });
-          setPhase("complete");
+          setPhase("documents");
         }, 1100);
       } catch (e) {
         clearTimers();
@@ -309,6 +312,23 @@ export default function NewPacketPage() {
     }
   }, [checkingExisting, convex, startGeneration]);
 
+  const finishDocuments = useCallback(async () => {
+    if (!result || finalizingDocuments) return;
+    setFinalizingDocuments(true);
+    try {
+      const client = await convex.query(api.clients.getClient, { clientId: result.clientId });
+      if (!client) throw new Error("The client record is no longer available.");
+      if (client.packetDirty) {
+        await regeneratePacket({ clientId: result.clientId });
+      }
+      setPhase("complete");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not add the files to the packet.");
+    } finally {
+      setFinalizingDocuments(false);
+    }
+  }, [result, finalizingDocuments, convex, regeneratePacket]);
+
   const restart = useCallback(() => {
     clearTimers();
     setPhase("upload");
@@ -326,6 +346,7 @@ export default function NewPacketPage() {
     setFromBuilder(false);
     setPendingReplacement(null);
     setCheckingExisting(false);
+    setFinalizingDocuments(false);
   }, [clearTimers]);
 
   const stepIndex =
@@ -333,9 +354,11 @@ export default function NewPacketPage() {
       ? 0
       : phase === "extracting" || phase === "draw-count"
         ? 1
-        : phase === "verify"
+        : phase === "verify" || phase === "generating"
           ? 2
-          : 3;
+          : phase === "documents"
+            ? 3
+            : 4;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-8">
@@ -397,6 +420,13 @@ export default function NewPacketPage() {
               steps={GENERATION_STEPS}
               doneCount={doneCount}
               showProgress
+            />
+          ) : phase === "documents" && result ? (
+            <AdditionalDocumentsStep
+              clientId={result.clientId}
+              clientName={result.clientName}
+              finalizing={finalizingDocuments}
+              onContinue={() => void finishDocuments()}
             />
           ) : phase === "complete" && result ? (
             <CompleteStep

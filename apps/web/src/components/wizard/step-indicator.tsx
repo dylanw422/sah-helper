@@ -4,6 +4,7 @@ import {
   CheckIcon,
   CheckSquareIcon,
   DownloadIcon,
+  FilesIcon,
   UploadIcon,
   ZapIcon,
 } from "lucide-react";
@@ -13,6 +14,7 @@ const STEPS = [
   { key: "upload", label: "Upload Invoice", icon: UploadIcon },
   { key: "processing", label: "AI Extraction", icon: ZapIcon },
   { key: "verify", label: "Verify Data", icon: CheckSquareIcon },
+  { key: "documents", label: "Add Documents", icon: FilesIcon },
   { key: "complete", label: "Download Packet", icon: DownloadIcon },
 ] as const;
 

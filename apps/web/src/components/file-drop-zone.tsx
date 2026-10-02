@@ -9,21 +9,32 @@ import { toast } from "sonner";
 
 import { convertToPdf, UnsupportedFileError } from "@/lib/convert-to-pdf";
 
-export function FileDropZone({ clientId }: { clientId: Id<"clients"> }) {
+export function FileDropZone({
+  clientId,
+  onUploadingChange,
+  disabled = false,
+}: {
+  clientId: Id<"clients">;
+  onUploadingChange?: (uploading: boolean) => void;
+  disabled?: boolean;
+}) {
   const generateUploadUrl = useMutation(api.uploads.generateUploadUrl);
   const addClientFile = useMutation(api.clientFiles.addClientFile);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const uploadingRef = useRef(false);
   const [dragOver, setDragOver] = useState(false);
   const [uploadingCount, setUploadingCount] = useState(0);
 
   const handleFiles = async (fileList: FileList | File[]) => {
     const files = Array.from(fileList);
-    if (files.length === 0) return;
+    if (files.length === 0 || uploadingRef.current || disabled) return;
 
-    setUploadingCount((c) => c + files.length);
-    await Promise.all(
-      files.map(async (file) => {
+    uploadingRef.current = true;
+    setUploadingCount(files.length);
+    onUploadingChange?.(true);
+    try {
+      for (const file of files) {
         try {
           const pdf = await convertToPdf(file);
           const uploadUrl = await generateUploadUrl();
@@ -47,14 +58,19 @@ export function FileDropZone({ clientId }: { clientId: Id<"clients"> }) {
         } finally {
           setUploadingCount((c) => c - 1);
         }
-      }),
-    );
+      }
+    } finally {
+      uploadingRef.current = false;
+      onUploadingChange?.(false);
+    }
   };
 
   return (
     <button
       type="button"
+      disabled={disabled || uploadingCount > 0}
       onClick={() => inputRef.current?.click()}
+      aria-busy={uploadingCount > 0}
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);
@@ -85,7 +101,9 @@ export function FileDropZone({ clientId }: { clientId: Id<"clients"> }) {
       <input
         ref={inputRef}
         type="file"
+        disabled={disabled || uploadingCount > 0}
         multiple
+        accept=".pdf,application/pdf,image/*,.txt,.md,.csv,.json,.log,text/*"
         className="hidden"
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => {

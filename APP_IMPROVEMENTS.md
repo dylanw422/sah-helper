@@ -33,3 +33,4 @@ Start with **packet draft recovery, side-by-side verification, and the readiness
 MY IDEAS
 
 1. Add addtional files before downloading after generating a packet
+2. Delete spec sheets / revise settings page
