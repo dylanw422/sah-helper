@@ -71,6 +71,7 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
   const detected = useMemo(() => suppliedRooms ?? detectRooms(plan.walls), [plan.walls, suppliedRooms]);
   const roofs = useMemo(() => layers.roof ? roofLayouts(plan) : [], [plan.walls, plan.roofOverhang, plan.roofType, layers.roof]);
   const dims = useMemo(() => layers.dimensions ? automaticDimensions({ walls: plan.walls, openings: plan.openings }, detected) : [], [plan.walls, plan.openings, detected, layers.dimensions]);
+  const wallInk = useMemo(() => plan.walls.map(wall => ({ wall, segments: wallSegments(wall, plan) })), [plan.walls, plan.openings]);
   const obstacles = useMemo(() => layers.fixtures ? plan.fixtures.filter(f => CATALOG_MAP.get(f.catalogId)?.category !== "Electrical").map(f => bounds(fixtureCorners(f))) : [], [plan.fixtures, layers.fixtures]);
   const fontSize = Math.max(5, Math.min(10, 10 / scale));
   const selected = (type: Selection["type"], id: string) => selection?.type === type && selection.id === id;
@@ -88,17 +89,18 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
         {roof.lines.map((line, j) => <path key={j} data-roof-line={line.kind} d={`M${line.a.x},${line.a.y}L${line.b.x},${line.b.y}`} strokeWidth={line.kind === "ridge" ? 1.4 : 1}><title>{line.kind === "ridge" ? "Roof ridge" : line.kind === "hip" ? "Roof hip" : "Roof valley"}</title></path>)}
       </g>)}
     </g> : null}
-    <g data-layer="walls">{plan.walls.map(w => {
+    <g data-layer="walls">
+      {/* Paint every border before any wall body, so overlapping bodies hide internal seams. */}
+      {wallInk.flatMap(({ wall: w, segments }) => segments.map((segment, i) => <path key={`${w.id}:${i}`} data-wall-outline={w.id} pointerEvents="none" d={`M${segment.a.x},${segment.a.y}L${segment.b.x},${segment.b.y}`} fill="none" stroke={selected("wall", w.id) ? paint("#818cf8", "#0e8c7c") : paint("#b4b7c7", "#31463f")} strokeWidth={w.thickness + 1} strokeLinecap="square" />))}
+      {wallInk.map(({ wall: w, segments }) => {
       const active = selected("wall", w.id);
       return <g key={w.id} data-kind="wall" data-id={w.id}>
         <path d={`M${w.a.x},${w.a.y}L${w.b.x},${w.b.y}`} stroke="transparent" strokeWidth={Math.max(w.thickness, 10 / scale)} fill="none" />
-        {wallSegments(w, plan).map((segment, i) => <g key={i}>
-          <path d={`M${segment.a.x},${segment.a.y}L${segment.b.x},${segment.b.y}`} stroke={active ? paint("#818cf8", "#0e8c7c") : paint("#b4b7c7", "#31463f")} strokeWidth={w.thickness + 1} strokeLinecap="square" />
-          <path d={`M${segment.a.x},${segment.a.y}L${segment.b.x},${segment.b.y}`} stroke={active ? paint("#37395e", "#b9e4d8") : w.kind === "exterior" ? paint("#757988", "#61736a", "#ddd") : paint("#555966", "#a4afa5", "#ddd")} strokeWidth={Math.max(0.5, w.thickness - 1)} strokeLinecap="square" />
-        </g>)}
-        {active ? [w.a, w.b].map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={5 / scale} fill={paint("#22242c", "#fff", "#fff")} stroke={paint("#818cf8", "#0e8c7c")} strokeWidth={1.5 / scale} data-kind="wall" data-id={w.id} data-end={i ? "b" : "a"} />) : null}
+        {segments.map((segment, i) => <path key={i} data-wall-body={w.id} d={`M${segment.a.x},${segment.a.y}L${segment.b.x},${segment.b.y}`} fill="none" stroke={active ? paint("#37395e", "#b9e4d8") : w.kind === "exterior" ? paint("#757988", "#61736a", "#ddd") : paint("#555966", "#a4afa5", "#ddd")} strokeWidth={Math.max(0.5, w.thickness - 1)} strokeLinecap="square" />)}
       </g>;
-    })}</g>
+    })}
+      {selection?.type === "wall" ? plan.walls.filter(w => w.id === selection.id).flatMap(w => [w.a, w.b].map((p, i) => <circle key={`${w.id}:${i}`} cx={p.x} cy={p.y} r={5 / scale} fill={paint("#22242c", "#fff", "#fff")} stroke={paint("#818cf8", "#0e8c7c")} strokeWidth={1.5 / scale} data-kind="wall" data-id={w.id} data-end={i ? "b" : "a"} />)) : null}
+    </g>
     <g data-layer="openings">{plan.openings.map(o => {
       const w = plan.walls.find(w => w.id === o.wallId);
       if (!w) return null;

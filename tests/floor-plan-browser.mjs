@@ -87,6 +87,35 @@ try {
   }), "plan actions share the drawing toolbar with Select and Pan");
   await check(page.locator(".fp-tools").evaluate(el => el.querySelector('button[aria-label="Home"]').getBoundingClientRect().right < el.querySelector('button[aria-label="Select"]').getBoundingClientRect().left), "Home appears immediately before Select");
   await check(Promise.resolve(await page.locator('[data-layer="walls"] > g').count() === 7), "furnished example opens with seven walls");
+  const mergedWallPixels = await page.evaluate(async repo => {
+    const { planSvg } = await import(`/@fs/${repo}/apps/web/src/components/floor-plan/export.tsx`);
+    const { blankPlan, DEFAULT_LAYERS } = await import(`/@fs/${repo}/apps/web/src/lib/floor-plan/model.ts`);
+    const wall = (id, a, b, thickness = 12) => ({ id, a: { x: a[0], y: a[1] }, b: { x: b[0], y: b[1] }, thickness, kind: "interior" });
+    const cases = [
+      { name: "crossing", walls: [wall("a", [0, 60], [120, 60]), wall("b", [60, 0], [60, 120])], probe: [66, 60] },
+      { name: "T junction", walls: [wall("a", [0, 60], [120, 60]), wall("b", [60, 60], [60, 120])], probe: [66, 60] },
+      { name: "collinear overlap", walls: [wall("a", [0, 60], [100, 60]), wall("b", [60, 60], [120, 60])], probe: [54, 60] },
+      { name: "angled overlap", walls: [wall("a", [0, 60], [120, 60]), wall("b", [60, 60], [110, 110])], probe: [66, 58] },
+      { name: "different thicknesses", walls: [wall("a", [0, 60], [120, 60], 16), wall("b", [60, 60], [60, 120], 6)], probe: [63, 60] },
+    ];
+    const layers = Object.fromEntries(Object.keys(DEFAULT_LAYERS).map(key => [key, false]));
+    const results = [];
+    for (const c of cases) {
+      const plan = { ...blankPlan(), walls: c.walls }, boxOnly = planSvg(plan, layers).box;
+      const { svg, box } = planSvg(plan, layers, { width: boxOnly.width * 4, height: boxOnly.height * 4 });
+      const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+      try {
+        const img = new Image(); await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url; });
+        const canvas = document.createElement("canvas"); canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d"); ctx.drawImage(img, 0, 0);
+        const pixel = ctx.getImageData(Math.round((c.probe[0] - box.x) * 4), Math.round((c.probe[1] - box.y) * 4), 1, 1).data;
+        results.push({ name: c.name, pixel: [...pixel] });
+      } finally { URL.revokeObjectURL(url); }
+    }
+    return results;
+  }, repo);
+  for (const result of mergedWallPixels) await check(Promise.resolve(result.pixel.slice(0, 3).every(channel => channel === 221)), `${result.name} renders a continuous wall body without an internal border in print artwork`);
+
   await check(Promise.resolve(await page.locator('[data-layer="rooms"] polygon').count() === 4), "four rooms generated automatically");
   await check(Promise.resolve(await page.locator('[data-layer="roof"] polygon').count() === 1), "roof generated automatically");
   await check(Promise.resolve(await page.locator('[data-roof-line="ridge"]').count() === 1 && await page.locator('[data-roof-line="hip"]').count() === 4), "default hip roof has corner hips and a centered ridge above the furnished example");
