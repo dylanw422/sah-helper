@@ -137,7 +137,26 @@ try {
     return { bodyFaces: [face("north", false), face("continuation", false)], outlineFaces: [face("north", true), face("continuation", true)], interiorCount: inside.length, topCount: top.length, topLabel: top[0]?.querySelector("text").textContent };
   }, repo);
   await check(Promise.resolve(mixedWallArtwork.bodyFaces.every(y => y === 2.5) && mixedWallArtwork.outlineFaces.every(y => y === 3.5)), "joined interior and exterior wall bodies and borders render perfectly flush on the room side");
-  await check(Promise.resolve(mixedWallArtwork.interiorCount === 4 && mixedWallArtwork.topCount === 1 && mixedWallArtwork.topLabel === "19′ 6″"), "exported mixed wall run has one continuous interior dimension across the type and thickness change");
+  await check(Promise.resolve(mixedWallArtwork.interiorCount === 2 && mixedWallArtwork.topCount === 1 && mixedWallArtwork.topLabel === "19′ 6″"), "exported mixed wall run has one continuous interior dimension and no opposite duplicates");
+
+  const oppositeDimensions = await page.evaluate(async repo => {
+    const { planSvg } = await import(`/@fs/${repo}/apps/web/src/components/floor-plan/export.tsx`);
+    const { automaticDimensions } = await import(`/@fs/${repo}/apps/web/src/lib/floor-plan/dimensions.ts`);
+    const { blankPlan, DEFAULT_LAYERS } = await import(`/@fs/${repo}/apps/web/src/lib/floor-plan/model.ts`);
+    const wall = (id, a, b, kind = "exterior") => ({ id, a: { x: a[0], y: a[1] }, b: { x: b[0], y: b[1] }, kind, thickness: 6 });
+    const walls = [wall("north", [0, 0], [240, 0], "interior"), wall("east", [240, 0], [240, 180], "interior"), wall("south", [240, 180], [0, 180]), wall("west", [0, 180], [0, 0])];
+    const marks = plan => {
+      const dimensions = automaticDimensions(plan), { svg } = planSvg(plan, { ...DEFAULT_LAYERS, roof: false });
+      const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+      return [...doc.querySelectorAll("[data-room-dimension]")].map(node => ({ dimension: dimensions.find(dim => dim.id === node.getAttribute("data-dimension")), label: node.querySelector("text")?.textContent }));
+    };
+    return {
+      rectangle: marks({ ...blankPlan(), walls }),
+      split: marks({ ...blankPlan(), walls: [...walls, wall("branch", [120, 180], [120, 120], "interior")] }),
+    };
+  }, repo);
+  await check(Promise.resolve(oppositeDimensions.rectangle.length === 2 && oppositeDimensions.rectangle.every(mark => mark.dimension.exteriorFace && mark.label)), "opposite room measurements render once and prefer the exterior wall faces");
+  await check(Promise.resolve(oppositeDimensions.split.map(mark => mark.dimension.value).sort((a, b) => a - b).join(",") === "114,114,174,234" && oppositeDimensions.split.every(mark => mark.label)), "partitioned opposite walls retain both split dimensions and the different full-room measurement in exports");
 
   await check(Promise.resolve(await page.locator('[data-layer="rooms"] polygon').count() === 4), "four rooms generated automatically");
   await check(Promise.resolve(await page.getByRole("textbox", { name: "Plan name", exact: true }).count() === 1 && await page.locator(".fp-empty-properties, .fp-properties").count() === 0), "unselected right panel shows plan details without an empty properties section");
@@ -239,7 +258,7 @@ try {
   const compactFontBeforeZoom = await compactNorthText.evaluate(dimensionScreenSize);
   await check(compactPage.locator('[data-room-dimension] text').evaluateAll(elements => {
     const angles = elements.map(el => Number(el.parentElement.getAttribute("transform").match(/rotate\(([^)]+)\)/)[1]));
-    return angles.length >= 2 && angles.some(angle => Math.abs(Math.sin((angle - angles[0]) * Math.PI / 180)) > .9);
+    return elements[0]?.closest('svg').querySelectorAll('[data-room-dimension]').length === 2 && angles.length === 2 && angles.some(angle => Math.abs(Math.sin((angle - angles[0]) * Math.PI / 180)) > .9);
   }), "small rooms keep both a width and a depth dimension visible when zoomed out");
   await check(Promise.resolve(await compactPage.locator('[data-dimension^="wall:short:"]').count() === 0 && await compactPage.evaluate(labelsReadable, undefined)), "small-room measurements omit spans under six inches and keep visible dimension and room labels from overlapping");
   await check(compactPage.locator('[data-layer="dimensions"] text').evaluateAll(elements => elements.length > 0 && elements.every(el => Number(el.getAttribute("font-size")) * Math.hypot(el.getScreenCTM().a, el.getScreenCTM().b) >= (el.closest('[data-dimension-label-adjusted]') ? 7.9 : 10.9) - 4 / 3)), "dimensions keep their screen size with the one-point font reduction");
@@ -252,7 +271,7 @@ try {
   await compactPage.getByRole("textbox", { name: "New dimension", exact: true }).press("Escape");
   await compactPage.screenshot({ path: resolve(output, "compact-room-dimensions.png"), fullPage: true });
   for (let i = 0; i < 16; i++) await compactPage.getByRole("button", { name: "Zoom in", exact: true }).click();
-  await check(Promise.resolve(await compactPage.locator('[data-room-dimension] text').count() >= 2 && await compactPage.evaluate(labelsReadable, undefined)), "zooming in keeps both small-room dimensions readable without overlapping labels");
+  await check(Promise.resolve(await compactPage.locator('[data-room-dimension]').count() === 2 && await compactPage.locator('[data-room-dimension] text').count() === 2 && await compactPage.evaluate(labelsReadable, undefined)), "zooming in keeps exactly two small-room dimensions readable without opposite duplicates");
   await check(Promise.resolve(await compactNorthText.evaluate(dimensionScreenSize) > compactFontBeforeZoom * 3 && await compactNorthText.evaluate(el => Number(el.getAttribute("font-size")) >= 11 - 4 / 3)), "zooming in enlarges dimension text while retaining a minimum drawing font size");
   await compactPage.screenshot({ path: resolve(output, "zoomed-room-dimensions.png"), fullPage: true });
   const compactEditable = compactPage.locator('[data-room-dimension] [data-edit-dimension]').first();

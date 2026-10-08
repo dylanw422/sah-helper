@@ -1,7 +1,7 @@
 import { bounds, detectRooms, distance, lerp, project, samePoint, wallFaceGeometry, type Room } from "./geometry";
 import type { Plan, Point, Wall } from "./model";
 import { roomDimensions } from "./room-dimensions";
-export type Dimension = { id: string; a: Point; b: Point; offset: number; value: number; overall?: boolean; roomId?: string; openingId?: string; hideLabel?: boolean; interior?: boolean; doorway?: boolean };
+export type Dimension = { id: string; a: Point; b: Point; offset: number; value: number; overall?: boolean; roomId?: string; openingId?: string; hideLabel?: boolean; interior?: boolean; doorway?: boolean; exteriorFace?: boolean };
 
 function exteriorOffset(wall: Wall, a: Point, b: Point, rooms: Room[]): number {
   const midpoint = lerp(a, b, 0.5);

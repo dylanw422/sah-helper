@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { automaticDimensions, wallSegments } from "../apps/web/src/lib/floor-plan/dimensions";
-import { layoutDimensions, labelsOverlap } from "../apps/web/src/lib/floor-plan/dimension-layout";
+import { layoutDimensions, labelsOverlap, uniqueRoomDimensions } from "../apps/web/src/lib/floor-plan/dimension-layout";
 import { bounds, detectRooms, fitOpening, moveWallPoint, moveWalls, normalizeOpenings, offsetPolygon, pointInPolygon, polygonArea, roofPolygons, snapPoint, wallFaceGeometry } from "../apps/web/src/lib/floor-plan/geometry";
 import { blankPlan, DEFAULT_LAYERS, formatLength, parsePlan, starterPlan, type Point, type Wall } from "../apps/web/src/lib/floor-plan/model";
 import { clientPlanError, planFingerprint } from "../apps/web/src/lib/floor-plan/client-plans";
@@ -50,11 +50,11 @@ describe("readable dimension labels", () => {
         const labels = layout.flatMap(mark => mark.labelBounds ? [mark.labelBounds] : []);
         for (let i = 0; i < labels.length; i++) for (let j = i + 1; j < labels.length; j++) expect(labelsOverlap(labels[i], labels[j])).toBe(false);
         const sides = layout.filter(mark => mark.dimension.roomId && mark.labelBounds).map(mark => mark.dimension);
-        expect(sides.length).toBeGreaterThanOrEqual(2);
+        expect(sides.length).toBe(2);
         const first = sides[0];
         expect(sides.some(dim => Math.abs((first.b.x - first.a.x) * (dim.b.y - dim.a.y) - (first.b.y - first.a.y) * (dim.b.x - dim.a.x)) > 1)).toBe(true);
       }
-      expect(fit.some(mark => mark.dimension.roomId && mark.dimension.hideLabel)).toBe(true);
+      expect(fit.filter(mark => mark.dimension.roomId).length).toBe(2);
       expect(JSON.stringify(dimensions)).toBe(before);
       for (const mark of fit.filter(mark => mark.labelBounds && mark.dimension.roomId)) {
         const resized = editDimension(p, mark.dimension.id, mark.dimension.value + 12);
@@ -112,6 +112,56 @@ describe("readable dimension labels", () => {
     const box = marks.find(mark => mark.dimension.id === "upward")!.labelBounds!;
     expect(box.x + box.width / 2).toBeCloseTo(20 - 4 - (11 - 4 / 3) * .35);
     expect(marks.find(mark => mark.dimension.id === "nearby")!.dimension.hideLabel).toBe(true);
+  });
+});
+
+describe("opposite interior dimensions", () => {
+  test("rectangles and squares retain one span per direction in every orientation", () => {
+    for (const height of [180, 240]) for (const angle of [0, Math.PI / 4, Math.PI / 2]) {
+      const p = rectangle(240, height);
+      const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      p.walls = p.walls.map(w => ({ ...w, a: rotate(w.b), b: rotate(w.a) }));
+      const dimensions = automaticDimensions(p), before = JSON.stringify(dimensions);
+      const room = uniqueRoomDimensions(dimensions).filter(dim => dim.roomId);
+      expect(room.length).toBe(2);
+      expect(room.map(dim => Math.round(dim.value)).sort((a, b) => a - b)).toEqual([height - 6, 234]);
+      expect(JSON.stringify(dimensions)).toBe(before);
+    }
+  });
+  test("exterior faces win even when their dimensions come later", () => {
+    const p = rectangle();
+    p.walls[0].kind = "interior";
+    p.walls[1].kind = "interior";
+    const dimensions = automaticDimensions(p);
+    const room = uniqueRoomDimensions(dimensions).filter(dim => dim.roomId);
+    expect(room.length).toBe(2);
+    expect(room.every(dim => dim.exteriorFace)).toBe(true);
+    expect(room.some(dim => dim.a.y === 177 && dim.b.y === 177)).toBe(true);
+    expect(room.some(dim => dim.a.x === 3 && dim.b.x === 3)).toBe(true);
+    expect(uniqueRoomDimensions([...dimensions].reverse()).filter(dim => dim.roomId).map(dim => dim.id).sort()).toEqual(room.map(dim => dim.id).sort());
+  });
+  test("a partition keeps both split spans and the full opposite span", () => {
+    const p = rectangle();
+    p.walls.push(wall("branch", { x: 120, y: 180 }, { x: 120, y: 120 }, "interior"));
+    const room = uniqueRoomDimensions(automaticDimensions(p)).filter(dim => dim.roomId);
+    expect(room.map(dim => dim.value).sort((a, b) => a - b)).toEqual([114, 114, 174, 234]);
+    expect(room.filter(dim => dim.a.y === 177 && dim.b.y === 177).length).toBe(2);
+  });
+  test("different opening chains preserve equal lengths at different positions", () => {
+    const p = rectangle();
+    p.openings = [
+      { id: "north", wallId: "w0", kind: "window", width: 36, t: .25, flip: false },
+      { id: "south", wallId: "w2", kind: "window", width: 36, t: .25, flip: false },
+    ];
+    const room = uniqueRoomDimensions(automaticDimensions(p)).filter(dim => dim.roomId);
+    expect(room.filter(dim => dim.a.y === dim.b.y).map(dim => dim.value).sort((a, b) => a - b)).toEqual([36, 36, 39, 39, 159, 159]);
+    expect(room.length).toBe(7);
+  });
+  test("different rooms and physical doorway widths remain independent", () => {
+    const north = { id: "north", roomId: "a", a: { x: 0, y: 0 }, b: { x: 36, y: 0 }, value: 36, offset: 14, interior: true };
+    const south = { ...north, id: "south", roomId: "b", a: { x: 36, y: 72 }, b: { x: 0, y: 72 } };
+    expect(uniqueRoomDimensions([north, south]).length).toBe(2);
+    expect(uniqueRoomDimensions([{ ...north, doorway: true, openingId: "north-door" }, { ...south, roomId: "a", doorway: true, openingId: "south-door" }]).length).toBe(2);
   });
 });
 

@@ -48,6 +48,31 @@ function labelGeometry(dim: Dimension, fontSize: number, label: string, padding:
   return { width, height, center, box: { x: center.x - boxWidth / 2, y: center.y - boxHeight / 2, width: boxWidth, height: boxHeight, corners } };
 }
 
+// Pick one face of matching opposite spans before fitting their labels. Keep
+// doorway widths independent so each physical opening remains measurable.
+export function uniqueRoomDimensions(dimensions: Dimension[]): Dimension[] {
+  const duplicateIds = new Set<string>(), retained: Dimension[] = [];
+  const candidates = dimensions.filter(dim => dim.roomId && !dim.doorway).sort((a, b) => Number(!!b.exteriorFace) - Number(!!a.exteriorFace) || Number(!!a.hideLabel) - Number(!!b.hideLabel) || a.id.localeCompare(b.id));
+  for (const dim of candidates) {
+    const duplicate = retained.some(other => {
+      if (other.roomId !== dim.roomId || Math.abs(other.value - dim.value) > .01) return false;
+      const length = distance(other.a, other.b), otherLength = distance(dim.a, dim.b);
+      if (length < .5 || otherLength < .5) return false;
+      const ux = (other.b.x - other.a.x) / length, uy = (other.b.y - other.a.y) / length;
+      // Opposite room faces run in opposite directions and face one another.
+      if ((ux * (dim.b.x - dim.a.x) + uy * (dim.b.y - dim.a.y)) / otherLength > -1 + 1e-8) return false;
+      if (-uy * (dim.a.x - other.a.x) + ux * (dim.a.y - other.a.y) <= .01) return false;
+      const along = [dim.a, dim.b].map(p => (p.x - other.a.x) * ux + (p.y - other.a.y) * uy);
+      // Compare the actual span, not just its printed length. Different jamb
+      // and partition chains on the opposite face must remain measurable.
+      return Math.abs(Math.min(...along)) < .01 && Math.abs(Math.max(...along) - length) < .01;
+    });
+    if (duplicate) duplicateIds.add(dim.id);
+    else retained.push(dim);
+  }
+  return dimensions.filter(dim => !duplicateIds.has(dim.id));
+}
+
 // Presentation only: retain every measured span and stable ID for geometry
 // and editing, while choosing readable labels for the current drawing scale.
 export function layoutDimensions(dimensions: Dimension[], scale = 1): DimensionLayout[] {
@@ -55,7 +80,7 @@ export function layoutDimensions(dimensions: Dimension[], scale = 1): DimensionL
   // magnifies the text along with the plan instead of shrinking its font.
   const fontScale = Math.min(1, Math.max(scale, .01));
   const primary = new Map<string, Dimension>();
-  const visible = dimensions.filter(dim => dim.value >= MIN_DISPLAY_DIMENSION - 1e-8);
+  const visible = uniqueRoomDimensions(dimensions.filter(dim => dim.value >= MIN_DISPLAY_DIMENSION - 1e-8));
   for (const dim of visible) {
     if (!dim.roomId || dim.hideLabel || dim.doorway) continue;
     let angle = Math.atan2(dim.b.y - dim.a.y, dim.b.x - dim.a.x);
@@ -86,7 +111,7 @@ export function layoutDimensions(dimensions: Dimension[], scale = 1): DimensionL
     }
   }
   // A small room must retain two different measuring directions. Try the
-  // opposite faces, shorter whole-foot labels, and positions along each span
+  // available faces, shorter whole-foot labels, and positions along each span
   // before sacrificing either measurement to the collision rules.
   const roomIds = new Set([...primary.values()].map(dim => dim.roomId!));
   for (const roomId of roomIds) {

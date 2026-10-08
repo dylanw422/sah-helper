@@ -70,7 +70,8 @@ export function roomDimensions(plan: Pick<Plan, "walls" | "openings">, rooms: Ro
         const start = sorted[i], end = sorted[i + 1];
         if (partitionSpans.some(span => (start + end) / 2 > span.start && (start + end) / 2 < span.end)) continue;
         const opening = openingSpans.find(o => o.door ? start >= o.start - 0.01 && end <= o.end + 0.01 : Math.abs(o.start - start) < 0.01 && Math.abs(o.end - end) < 0.01);
-        dimensions.push({ id: `room:${room.id}:edge:${edge}:segment:${i}`, roomId: room.id, openingId: opening?.id, a: at(start), b: at(end), value: end - start, offset: 14, interior: true });
+        const exteriorFace = hostWalls.some(w => w.kind === "exterior" && Math.min(Math.max(along(w.a), along(w.b)), end) - Math.max(Math.min(along(w.a), along(w.b)), start) > .01);
+        dimensions.push({ id: `room:${room.id}:edge:${edge}:segment:${i}`, roomId: room.id, openingId: opening?.id, a: at(start), b: at(end), value: end - start, offset: 14, interior: true, exteriorFace });
       }
     }
   }
