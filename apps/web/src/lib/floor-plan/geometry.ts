@@ -1,4 +1,5 @@
 import type { Fixture, Opening, Plan, Point, Wall } from "./model";
+import { constrainWallAngles, wallPointTargets } from "./wall-constraints";
 import { noteCorners } from "./notes";
 
 export const EPS = 0.01;
@@ -267,8 +268,19 @@ export function moveWallPoint(plan: Plan, wallId: string, end: "a" | "b", to: Po
     const attachment = project(p, wall.a, wall.b);
     return attachment.distance < EPS ? lerp(a, b, attachment.t) : p;
   };
-  const walls = plan.walls.map(w => ({ ...w, a: move(w.a), b: move(w.b) }));
-  if (walls.some(w => distance(w.a, w.b) < 1)) return plan;
+  const proposed = plan.walls.map(w => ({ ...w, a: move(w.a), b: move(w.b) }));
+  const walls = constrainWallAngles(plan.walls, proposed, wallPointTargets(plan.walls, wallId, end, to));
+  if (!walls || walls.some(w => distance(w.a, w.b) < 1)) return plan;
+  return { ...plan, walls, openings: normalizeOpenings(walls, plan.openings) };
+}
+export function moveWalls(plan: Plan, wallIds: string[], delta: Point): Plan {
+  const selected = plan.walls.filter(w => wallIds.includes(w.id));
+  const translate = (p: Point) => ({ x: p.x + delta.x, y: p.y + delta.y });
+  const move = (p: Point) => selected.some(w => project(p, w.a, w.b).distance < EPS) ? translate(p) : p;
+  const proposed = plan.walls.map(w => ({ ...w, a: move(w.a), b: move(w.b) }));
+  if (proposed.some(w => distance(w.a, w.b) < 1)) return plan;
+  const walls = constrainWallAngles(plan.walls, proposed, new Map(selected.map(w => [w.id, translate(lerp(w.a, w.b, .5))])));
+  if (!walls || walls.some(w => distance(w.a, w.b) < 1)) return plan;
   return { ...plan, walls, openings: normalizeOpenings(walls, plan.openings) };
 }
 export function normalizeOpenings(walls: Wall[], openings: Opening[]) {

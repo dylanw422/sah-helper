@@ -1,7 +1,7 @@
 import { memo } from "react";
 
 // Symbols share a 100 × 100 local coordinate system; physical dimensions live in the model.
-export const FixtureSymbol = memo(function FixtureSymbol({ symbol, dark = false, monochrome = false }: { symbol: string; dark?: boolean; monochrome?: boolean }) {
+const SymbolArtwork = memo(function SymbolArtwork({ symbol, dark = false, monochrome = false }: { symbol: string; dark?: boolean; monochrome?: boolean }) {
   const fill = (night: string, paper: string) => monochrome ? "#fff" : dark ? night : paper;
   const rect = <rect x="2" y="2" width="96" height="96" rx="5" fill={fill("#22242c", "#fdfdfa")} />;
   switch (symbol) {
@@ -30,4 +30,17 @@ export const FixtureSymbol = memo(function FixtureSymbol({ symbol, dark = false,
     case "drain": return <><circle cx="50" cy="50" r="44" fill={fill("#22242c", "#fdfdfa")} /><path d="M20 27H80M10 42H90M10 57H90M20 72H80" /></>;
     default: return rect;
   }
+});
+
+// Fit each physical silhouette to the model dimensions. Decorative padding in
+// the library symbol must not become a visible gap when an object meets a wall.
+const SYMBOL_BOUNDS: Record<string, [number, number, number, number]> = {
+  sofa: [2, 2, 96, 98], table: [3, 3, 94, 94], chair: [5, 2, 90, 98],
+  toilet: [12, 2, 76, 96], bar: [2, 0, 96, 100], heater: [4, 4, 92, 92],
+  outlet: [7, 7, 86, 86], gfci: [7, 7, 86, 86], light: [6, 6, 88, 88],
+  smoke: [7, 7, 86, 86], drain: [6, 6, 88, 88], fan: [0, 0, 100, 100], switch: [0, 0, 100, 100],
+};
+export const FixtureSymbol = memo(function FixtureSymbol(props: { symbol: string; dark?: boolean; monochrome?: boolean }) {
+  const [x, y, width, height] = SYMBOL_BOUNDS[props.symbol] ?? [2, 2, 96, 96];
+  return <g transform={`scale(${100 / width} ${100 / height}) translate(${-x} ${-y})`}><SymbolArtwork {...props} /></g>;
 });

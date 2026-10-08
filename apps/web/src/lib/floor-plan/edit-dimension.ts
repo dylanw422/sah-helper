@@ -1,3 +1,4 @@
+import { constrainWallAngles } from "./wall-constraints";
 import { automaticDimensions, type Dimension } from "./dimensions";
 import { detectRooms, distance, fitOpening, lerp, project, samePoint } from "./geometry";
 import { parsePlan, type Opening, type Plan, type Point, type Wall } from "./model";
@@ -96,7 +97,9 @@ function moveAttachedWalls(plan: Plan, movingWalls: Wall[], movingPoint: Point |
     }
     if (!changed) break;
   }
-  const walls = currentWalls();
+  const targets = new Map((movingPoint ? plan.walls.filter(w => project(movingPoint, w.a, w.b).distance < EPS) : movingWalls).map(w => [w.id, add(movingPoint ?? w.a, displacement)]));
+  const walls = constrainWallAngles(plan.walls, currentWalls(), targets);
+  if (!walls) throw new Error("This size cannot keep the existing 90° wall junctions connected. Choose the other arrow or a different length.");
   if (walls.some(w => distance(w.a, w.b) < 1)) throw new Error("This dimension would collapse a wall. Enter a larger length.");
   for (const node of attachments) for (const host of node.hosts) {
     const next = walls.find(w => w.id === host.id)!;

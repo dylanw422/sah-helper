@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { automaticDimensions, wallSegments } from "../apps/web/src/lib/floor-plan/dimensions";
-import { bounds, detectRooms, fitOpening, moveWallPoint, normalizeOpenings, offsetPolygon, pointInPolygon, polygonArea, roofPolygons, snapPoint } from "../apps/web/src/lib/floor-plan/geometry";
+import { bounds, detectRooms, fitOpening, moveWallPoint, moveWalls, normalizeOpenings, offsetPolygon, pointInPolygon, polygonArea, roofPolygons, snapPoint } from "../apps/web/src/lib/floor-plan/geometry";
 import { blankPlan, DEFAULT_LAYERS, formatLength, parsePlan, starterPlan, type Point, type Wall } from "../apps/web/src/lib/floor-plan/model";
 import { clientPlanError, planFingerprint } from "../apps/web/src/lib/floor-plan/client-plans";
 import { roofForPolygon, roofLayouts } from "../apps/web/src/lib/floor-plan/roof";
@@ -10,6 +10,8 @@ import { noteLayout } from "../apps/web/src/lib/floor-plan/notes";
 import { parseLengthInput } from "../apps/web/src/lib/floor-plan/length-input";
 import { deleteSelection, moveSelection, selectInBox, selectionBounds, visibleSelections } from "../apps/web/src/lib/floor-plan/selection";
 import { dimensionEnds, editDimension } from "../apps/web/src/lib/floor-plan/edit-dimension";
+import { snapFixtureToWalls } from "../apps/web/src/lib/floor-plan/fixture-snapping";
+import { CATALOG } from "../apps/web/src/lib/floor-plan/catalog";
 
 describe("client sync", () => {
   test("timestamps do not mark an unchanged or undone plan as dirty", () => {
@@ -28,12 +30,153 @@ describe("client sync", () => {
 });
 
 const wall = (id: string, a: Point, b: Point, kind: Wall["kind"] = "exterior"): Wall => ({ id, a, b, kind, thickness: 6 });
+
+describe("object snapping to wall faces", () => {
+  const shower = { id: "shower", catalogId: "shower", x: 24, y: 24, width: 48, depth: 48, rotation: 0 };
+  test("a shower fits exactly against both inside faces of a corner despite the grid", () => {
+    const p = rectangle();
+    expect(snapFixtureToWalls(shower, p, 10, { x: 24, y: 24 })).toEqual({ x: 27, y: 27 });
+    expect(snapFixtureToWalls({ ...shower, x: 30, y: 30 }, p, 10, { x: 30, y: 30 })).toEqual({ x: 27, y: 27 });
+    expect(snapFixtureToWalls({ ...shower, x: 216, y: 156 }, p, 10)).toEqual({ x: 213, y: 153 });
+  });
+  test("every library object snaps using its actual size and rotation", () => {
+    const p = { ...blankPlan(), walls: [wall("wall", { x: 0, y: 0 }, { x: 1000, y: 0 })] };
+    for (const item of CATALOG) for (const rotation of [0, 90, 180, 270]) {
+      const extent = rotation % 180 === 0 ? item.depth / 2 : item.width / 2;
+      const f = { id: item.id, catalogId: item.id, width: item.width, depth: item.depth, rotation, x: 500, y: extent + 6 };
+      const position = snapFixtureToWalls(f, p, 10);
+      expect(position.x).toBe(500);
+      expect(position.y).toBeCloseTo(extent + 3, 8);
+      expect(snapFixtureToWalls({ ...f, y: -f.y }, p, 10).y).toBeCloseTo(-extent - 3, 8);
+    }
+  });
+  test("angled walls and rotated fixtures snap to their faces with no penetration", () => {
+    const angle = Math.PI / 4, c = Math.cos(angle), s = Math.sin(angle);
+    const transform = (p: Point) => ({ x: 80 + c * p.x - s * p.y, y: -40 + s * p.x + c * p.y });
+    const p = { ...blankPlan(), walls: [wall("angled", transform({ x: 0, y: 0 }), transform({ x: 240, y: 0 }))] };
+    const f = { ...shower, ...transform({ x: 120, y: 24 }), rotation: 45 };
+    const position = snapFixtureToWalls(f, p, 10), expected = transform({ x: 120, y: 27 });
+    expect(position.x).toBeCloseTo(expected.x, 8);
+    expect(position.y).toBeCloseTo(expected.y, 8);
+  });
+  test("interior wall thickness is respected on either face", () => {
+    const p = rectangle();
+    p.walls.push({ ...wall("partition", { x: 120, y: 0 }, { x: 120, y: 180 }, "interior"), thickness: 4.5 });
+    expect(snapFixtureToWalls({ ...shower, x: 96, y: 90 }, p, 10).x).toBe(93.75);
+    expect(snapFixtureToWalls({ ...shower, x: 144, y: 90 }, p, 10).x).toBe(146.25);
+  });
+  test("openings and finite wall ends do not create invisible snapping surfaces", () => {
+    const p = rectangle();
+    p.openings.push({ id: "door", wallId: "w0", kind: "door", width: 72, t: .5, flip: false });
+    expect(snapFixtureToWalls({ ...shower, x: 120, y: 24 }, p, 10)).toEqual({ x: 120, y: 24 });
+    const short = { ...blankPlan(), walls: [wall("short", { x: 0, y: 0 }, { x: 30, y: 0 })] };
+    expect(snapFixtureToWalls({ ...shower, x: 90, y: 24 }, short, 10)).toEqual({ x: 90, y: 24 });
+    expect(snapFixtureToWalls({ ...shower, x: 32, y: 5, width: 6, depth: 6 }, short, 10, { x: 36, y: 12 })).toEqual({ x: 36, y: 12 });
+  });
+  test("away from walls the grid position survives and snapping does not alter dimensions", () => {
+    const p = rectangle(), before = JSON.stringify(p), dimensions = automaticDimensions(p);
+    expect(snapFixtureToWalls({ ...shower, x: 111, y: 81 }, p, 10, { x: 114, y: 84 })).toEqual({ x: 114, y: 84 });
+    snapFixtureToWalls(shower, p, 10);
+    expect(JSON.stringify(p)).toBe(before);
+    expect(automaticDimensions(p)).toEqual(dimensions);
+  });
+});
 function rectangle(width = 240, height = 180) {
   const p = blankPlan("Test home");
   const corners = [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height }];
   p.walls = corners.map((a, i) => wall(`w${i}`, a, corners[(i + 1) % 4]));
   return p;
 }
+
+describe("fixed right-angle wall junctions", () => {
+  const square = (walls: Wall[]) => {
+    for (let i = 0; i < 4; i++) {
+      const a = walls[i], b = walls[(i + 1) % 4];
+      expect(a.b).toEqual(b.a);
+      const ax = a.b.x - a.a.x, ay = a.b.y - a.a.y, bx = b.b.x - b.a.x, by = b.b.y - b.a.y;
+      expect((ax * bx + ay * by) / Math.hypot(ax, ay) / Math.hypot(bx, by)).toBeCloseTo(0, 8);
+    }
+  };
+  test("moving a wall diagonally keeps its square neighbors straight", () => {
+    const p = rectangle(), moved = moveWalls(p, ["w0"], { x: 24, y: 12 });
+    expect(moved.walls[0].a).toEqual({ x: 0, y: 12 });
+    expect(moved.walls[0].b).toEqual({ x: 240, y: 12 });
+    expect(moved.walls[1].b).toEqual(p.walls[1].b);
+    square(moved.walls);
+    const vertical = moveWalls(p, ["w1"], { x: 12, y: 24 });
+    expect(vertical.walls[1].a).toEqual({ x: 252, y: 0 });
+    expect(vertical.walls[1].b).toEqual({ x: 252, y: 180 });
+    square(vertical.walls);
+  });
+  test("moving a corner resizes both connected wall lines without tilting them", () => {
+    const p = rectangle(), moved = moveWallPoint(p, "w0", "b", { x: 300, y: 24 });
+    expect(moved.walls[0].a).toEqual({ x: 0, y: 24 });
+    expect(moved.walls[0].b).toEqual({ x: 300, y: 24 });
+    expect(moved.walls[1].b).toEqual({ x: 300, y: 180 });
+    square(moved.walls);
+    expect(detectRooms(moved.walls)).toHaveLength(1);
+  });
+  test("square angles stay locked when the entire plan is rotated", () => {
+    for (const angle of [Math.PI / 6, Math.PI / 4]) {
+      const transform = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle) + 400, y: p.x * Math.sin(angle) + p.y * Math.cos(angle) - 80 });
+      const p = rectangle(); p.walls = p.walls.map(w => ({ ...w, a: transform(w.a), b: transform(w.b) }));
+      const target = transform({ x: 300, y: 24 }), moved = moveWallPoint(p, "w0", "b", target);
+      expect(moved.walls[0].b.x).toBeCloseTo(target.x, 8);
+      expect(moved.walls[0].b.y).toBeCloseTo(target.y, 8);
+      square(moved.walls);
+    }
+  });
+  test("moving perpendicular T walls keeps both endpoints on their hosts", () => {
+    const p = rectangle(); p.walls.push(wall("partition", { x: 120, y: 0 }, { x: 120, y: 180 }, "interior"));
+    const moved = moveWalls(p, ["partition"], { x: 24, y: 12 });
+    expect(moved.walls[4].a).toEqual({ x: 144, y: 0 });
+    expect(moved.walls[4].b).toEqual({ x: 144, y: 180 });
+    square(moved.walls);
+    expect(detectRooms(moved.walls)).toHaveLength(2);
+    const corner = moveWallPoint(p, "w0", "b", { x: 300, y: 24 });
+    expect(corner.walls[4].a).toEqual({ x: 120, y: 24 });
+    expect(corner.walls[4].b).toEqual({ x: 120, y: 180 });
+  });
+  test("continuous collinear pieces move on one shared line", () => {
+    const p = rectangle(); p.walls[0] = { ...p.walls[0], b: { x: 120, y: 0 } };
+    p.walls.push(wall("north-extension", { x: 120, y: 0 }, { x: 240, y: 0 }));
+    const moved = moveWalls(p, ["w0"], { x: 12, y: 24 });
+    expect(moved.walls[0].a).toEqual({ x: 0, y: 24 });
+    expect(moved.walls[0].b.y).toBe(24);
+    expect(moved.walls[4].a).toEqual(moved.walls[0].b);
+    expect(moved.walls[4].b).toEqual({ x: 240, y: 24 });
+    expect(moved.walls[1].a).toEqual(moved.walls[4].b);
+    expect(detectRooms(moved.walls)).toHaveLength(1);
+  });
+  test("non-square adjacent walls remain freely adjustable", () => {
+    const p = blankPlan(); p.walls = [wall("a", { x: 0, y: 0 }, { x: 240, y: 0 }), wall("b", { x: 240, y: 0 }, { x: 300, y: 180 })];
+    const moved = moveWallPoint(p, "a", "b", { x: 264, y: 24 });
+    expect(moved.walls[0].b).toEqual({ x: 264, y: 24 });
+    expect(moved.walls[1].a).toEqual(moved.walls[0].b);
+    expect(moved.walls[0].a).toEqual(p.walls[0].a);
+    expect(moved.walls[1].b).toEqual(p.walls[1].b);
+    p.walls.push(...rectangle().walls.map(w => ({ ...w, id: `separate-${w.id}`, a: { x: w.a.x + 600, y: w.a.y }, b: { x: w.b.x + 600, y: w.b.y } })));
+    const withSquareRoom = moveWallPoint(p, "a", "b", { x: 264, y: 24 });
+    expect(withSquareRoom.walls.slice(0, 2)).toEqual(moved.walls);
+    expect(withSquareRoom.walls.slice(2)).toEqual(p.walls.slice(2));
+  });
+  test("moving a wall group preserves square junctions and a whole-plan move remains a translation", () => {
+    const p = rectangle();
+    const group = moveSelection(p, [{ type: "wall", id: "w0" }, { type: "wall", id: "w1" }], { x: 12, y: 24 });
+    expect(group.walls[0].a).toEqual({ x: 0, y: 24 });
+    expect(group.walls[0].b).toEqual({ x: 252, y: 24 });
+    square(group.walls);
+    const all = moveSelection(p, p.walls.map(w => ({ type: "wall", id: w.id })), { x: 12, y: 24 });
+    expect(all.walls).toEqual(p.walls.map(w => ({ ...w, a: { x: w.a.x + 12, y: w.a.y + 24 }, b: { x: w.b.x + 12, y: w.b.y + 24 } })));
+    square(all.walls);
+  });
+  test("a move that collapses or reverses a square wall leaves the original drawing intact", () => {
+    const p = rectangle(), before = JSON.stringify(p);
+    expect(moveWallPoint(p, "w0", "b", { x: -24, y: 24 })).toBe(p);
+    expect(moveWalls(p, ["w0"], { x: 0, y: 180 })).toBe(p);
+    expect(JSON.stringify(p)).toBe(before);
+  });
+});
 
 describe("automatic rooms and inside-face measurements", () => {
   test("a rectangle produces exactly one room with a usable area", () => {
@@ -210,11 +353,11 @@ describe("wall connections and openings", () => {
     expect(dimensions.some(d => d.id.startsWith("wall:west:segment:"))).toBe(true);
     expect(new Set(dimensions.map(d => d.id)).size).toBe(dimensions.length);
   });
-  test("moving corners also moves attached endpoints along the resized host wall", () => {
+  test("moving corners keeps attached perpendicular partitions square", () => {
     const p = rectangle(); p.walls.push(wall("partition", { x: 120, y: 0 }, { x: 120, y: 180 }, "interior"));
     const moved = moveWallPoint(p, "w0", "b", { x: 300, y: 0 });
     expect(moved.walls.find(w => w.id === "w1")!.a).toEqual({ x: 300, y: 0 });
-    expect(moved.walls.find(w => w.id === "partition")!.a).toEqual({ x: 150, y: 0 });
+    expect(moved.walls.find(w => w.id === "partition")!.a).toEqual({ x: 120, y: 0 });
     expect(detectRooms(moved.walls)).toHaveLength(2);
   });
   test("snapping prioritizes endpoints and projects T junctions precisely", () => {
@@ -613,13 +756,13 @@ describe("group selections", () => {
     p.utilities = [{ id: "run", kind: "cold", a: { x: 30, y: 30 }, b: { x: 80, y: 30 } }];
     const before = JSON.stringify(p);
     const moved = moveSelection(p, [{ type: "wall", id: "w0" }, { type: "wall", id: "w1" }, { type: "opening", id: "door" }, { type: "fixture", id: "bed" }, { type: "text", id: "note" }, { type: "utility", id: "run" }], { x: 12, y: 6 });
-    expect(moved.walls[0].a).toEqual({ x: 12, y: 6 });
+    expect(moved.walls[0].a).toEqual({ x: 0, y: 6 });
     expect(moved.walls[0].b).toEqual({ x: 252, y: 6 });
     expect(moved.walls[1].a).toEqual(moved.walls[0].b);
-    expect(moved.walls[1].b).toEqual({ x: 252, y: 186 });
+    expect(moved.walls[1].b).toEqual({ x: 252, y: 180 });
     expect(moved.walls[2].a).toEqual(moved.walls[1].b);
     expect(moved.walls[3].b).toEqual(moved.walls[0].a);
-    expect(moved.walls[4].a).toEqual({ x: 132, y: 6 });
+    expect(moved.walls[4].a).toEqual({ x: 120, y: 6 });
     expect(moved.walls[4].b).toEqual({ x: 120, y: 90 });
     expect(moved.openings).toEqual(p.openings);
     expect(moved.fixtures[0]).toMatchObject({ x: 72, y: 66, rotation: 30 });

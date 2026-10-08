@@ -5,9 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
 import { automaticDimensions, type Dimension } from "@/lib/floor-plan/dimensions";
 import { dimensionEnds, dimensionOpening, type FixedDimensionEnd } from "@/lib/floor-plan/edit-dimension";
-import { distance, fitOpening, fixtureCorners, lerp, moveWallPoint, normalizeOpenings, planBounds, polygonString, project, samePoint, snapPoint } from "@/lib/floor-plan/geometry";
-import { formatLength, id, type Layers, type Plan, type Point, type Selection, type Tool, type Utility, type Wall } from "@/lib/floor-plan/model";
+import { distance, fitOpening, fixtureCorners, lerp, moveWallPoint, moveWalls, normalizeOpenings, planBounds, polygonString, project, samePoint, snapPoint } from "@/lib/floor-plan/geometry";
+import { formatLength, id, type Fixture, type Layers, type Plan, type Point, type Selection, type Tool, type Utility, type Wall } from "@/lib/floor-plan/model";
 import { mergeSelections, moveSelection, selectInBox, selectionBounds, selectionKey } from "@/lib/floor-plan/selection";
+import { snapFixtureToWalls } from "@/lib/floor-plan/fixture-snapping";
 import { FixtureSymbol } from "./fixture-symbol";
 import { DimensionInlineEditor } from "./dimension-inline-editor";
 import { PlanArtwork, UTILITY_COLORS } from "./plan-artwork";
@@ -24,7 +25,7 @@ export const TOOL_HINTS: Record<Tool, string> = {
   rectangle: "Click or drag two opposite corners to create exterior walls",
   door: "Click a wall to place a door · Openings attach to the wall",
   window: "Click a wall to place a window · Openings attach to the wall",
-  fixture: "Click the plan to place · R rotates the preview · Esc cancels",
+  fixture: "Click to place · Object edges snap to wall faces · R rotates · Esc cancels",
   text: "Click to place a construction note · Edit its text in Properties",
   electrical: "Click points to draw circuit runs · Esc ends the run",
   cold: "Click points to draw cold-water runs · Esc ends the run",
@@ -117,6 +118,11 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
     }
     return point;
   };
+  const positionFixture = (fixture: Fixture, source = plan, fallback?: Point): Fixture => {
+    if (!settings.snap) return fixture;
+    const gridPosition = fallback ?? { x: Math.round(fixture.x / settings.grid) * settings.grid, y: Math.round(fixture.y / settings.grid) * settings.grid };
+    return { ...fixture, ...snapFixtureToWalls(fixture, source, 10 / view.zoom, gridPosition) };
+  };
   const finishSegment = (from: Point, to: Point) => {
     if (distance(from, to) < 1) return;
     if (tool === "rectangle") {
@@ -172,7 +178,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
     if (tool === "fixture") {
       const item = CATALOG_MAP.get(catalogId); if (!item) return;
       if (plan.fixtures.length >= 1000) { error("This plan has reached the 1,000-object limit."); return; }
-      const p = snapped(world, true, null), fixture = { id: id(), catalogId, x: p.x, y: p.y, width: item.width, depth: item.depth, rotation: placementRotation };
+      const fixture = positionFixture({ id: id(), catalogId, x: world.x, y: world.y, width: item.width, depth: item.depth, rotation: placementRotation });
       commit({ ...plan, fixtures: [...plan.fixtures, fixture] }); select({ type: "fixture", id: fixture.id }); return;
     }
     if (tool === "door" || tool === "window") {
@@ -211,7 +217,8 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
         catch (e) { setPreview(null); d.error = e instanceof Error ? e.message : "The selection could not be moved."; }
       } else if (d.selection.type === "fixture") {
         const f = snapshot.fixtures.find(f => f.id === d.selection.id)!;
-        setPreview({ ...snapshot, fixtures: snapshot.fixtures.map(item => item.id === f.id ? { ...item, x: f.x + delta.x, y: f.y + delta.y } : item) });
+        const moved = positionFixture({ ...f, x: f.x + world.x - d.start.x, y: f.y + world.y - d.start.y }, snapshot, { x: f.x + delta.x, y: f.y + delta.y });
+        setPreview({ ...snapshot, fixtures: snapshot.fixtures.map(item => item.id === f.id ? moved : item) });
       } else if (d.selection.type === "text") {
         setPreview({ ...snapshot, notes: snapshot.notes.map(n => n.id === d.selection.id ? d.end ? { ...n, width: Math.max(48, Math.min(2400, n.width + delta.x)) } : { ...n, x: n.x + delta.x, y: n.y + delta.y } : n) });
       } else if (d.selection.type === "wall") {
@@ -220,12 +227,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
           const point = settings.snap ? snapPoint(world, snapshot.walls, settings.grid, 10 / view.zoom, undefined, false, [w.id]) : world;
           setPreview(moveWallPoint(snapshot, w.id, d.end, point));
         } else {
-          const move = (p: Point) => {
-            const hit = project(p, w.a, w.b);
-            return hit.distance < 0.01 ? { x: p.x + delta.x, y: p.y + delta.y } : p;
-          };
-          const walls = snapshot.walls.map(item => ({ ...item, a: move(item.a), b: move(item.b) }));
-          if (walls.every(w => distance(w.a, w.b) >= 1)) setPreview({ ...snapshot, walls, openings: normalizeOpenings(walls, snapshot.openings) });
+          setPreview(moveWalls(snapshot, [w.id], delta));
         }
       } else if (d.selection.type === "opening") {
         const o = snapshot.openings.find(o => o.id === d.selection.id)!, w = snapshot.walls.find(w => w.id === o.wallId)!;
@@ -236,7 +238,8 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
       }
       return;
     }
-    setHover(snapped(world, e.shiftKey, tool === "rectangle" || tool === "fixture" || tool === "text" ? null : origin));
+    const item = tool === "fixture" ? CATALOG_MAP.get(catalogId) : undefined;
+    setHover(item ? positionFixture({ id: "preview", catalogId, x: world.x, y: world.y, width: item.width, depth: item.depth, rotation: placementRotation }) : snapped(world, e.shiftKey, tool === "rectangle" || tool === "text" ? null : origin));
   };
   const pointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     if (marquee.current?.moved || drag.current?.selections.length && drag.current.selections.length > 1) {

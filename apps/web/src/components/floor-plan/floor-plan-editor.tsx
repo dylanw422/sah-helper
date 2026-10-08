@@ -9,7 +9,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATALOG, CATALOG_MAP, CATEGORIES, type CatalogCategory } from "@/lib/floor-plan/catalog";
 import { editDimension } from "@/lib/floor-plan/edit-dimension";
-import { detectRooms, distance, normalizeOpenings, planBounds, project } from "@/lib/floor-plan/geometry";
+import { detectRooms, moveWalls, planBounds } from "@/lib/floor-plan/geometry";
 import { printBounds, printLayout, type PdfScale } from "@/lib/floor-plan/print";
 import { roofLayouts } from "@/lib/floor-plan/roof";
 import { deleteSelection, moveSelection, visibleSelections, selectionKey } from "@/lib/floor-plan/selection";
@@ -154,10 +154,7 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
     if (selection.type === "text") commit({ ...plan, notes: plan.notes.map(n => n.id === selection.id ? { ...n, x: n.x + dx, y: n.y + dy } : n) });
     if (selection.type === "utility") commit({ ...plan, utilities: plan.utilities.map(u => u.id === selection.id ? { ...u, a: { x: u.a.x + dx, y: u.a.y + dy }, b: { x: u.b.x + dx, y: u.b.y + dy } } : u) });
     if (selection.type === "wall") {
-      const wall = plan.walls.find(w => w.id === selection.id)!;
-      const move = (p: { x: number; y: number }) => project(p, wall.a, wall.b).distance < 0.01 ? { x: p.x + dx, y: p.y + dy } : p;
-      const walls = plan.walls.map(w => ({ ...w, a: move(w.a), b: move(w.b) }));
-      if (walls.every(w => distance(w.a, w.b) >= 1)) commit({ ...plan, walls, openings: normalizeOpenings(walls, plan.openings) });
+      commit(moveWalls(plan, [selection.id], { x: dx, y: dy }));
     }
   };
   const keyboardHandler = useRef<(e: KeyboardEvent) => void>(() => {});

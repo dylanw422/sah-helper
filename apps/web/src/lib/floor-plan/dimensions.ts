@@ -93,7 +93,7 @@ export function automaticDimensions(plan: Pick<Plan, "walls" | "openings">, supp
   }
   return dimensions;
 }
-export function wallSegments(wall: Wall, plan: Plan): { a: Point; b: Point }[] {
+export function wallSegments(wall: Wall, plan: Pick<Plan, "openings">): { a: Point; b: Point }[] {
   const length = distance(wall.a, wall.b);
   if (length < 0.5) return [];
   const intervals = plan.openings.filter(o => o.wallId === wall.id).map(o => [Math.max(0, o.t - o.width / 2 / length), Math.min(1, o.t + o.width / 2 / length)]).sort((a, b) => a[0] - b[0]);

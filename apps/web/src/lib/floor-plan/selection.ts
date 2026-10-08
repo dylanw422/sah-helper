@@ -1,6 +1,7 @@
 import { wallSegments } from "./dimensions";
 import { bounds, distance, fitOpening, fixtureCorners, lerp, pointInPolygon, project } from "./geometry";
 import { parsePlan, type Layers, type Plan, type Point, type Selection } from "./model";
+import { constrainWallAngles } from "./wall-constraints";
 import { noteCorners } from "./notes";
 
 export const selectionKey = (s: Selection) => `${s.type}:${s.id}`;
@@ -87,7 +88,10 @@ export function moveSelection(plan: Plan, selections: Selection[], delta: Point)
   // Shared corners and endpoints of attached walls follow exactly once, even
   // when multiple selected walls meet at the same junction.
   const moveEndpoint = (p: Point) => movedWalls.some(w => project(p, w.a, w.b).distance < .01) ? translate(p) : p;
-  const walls = plan.walls.map(w => has("wall", w.id) ? { ...w, a: translate(w.a), b: translate(w.b) } : { ...w, a: moveEndpoint(w.a), b: moveEndpoint(w.b) });
+  const proposed = plan.walls.map(w => has("wall", w.id) ? { ...w, a: translate(w.a), b: translate(w.b) } : { ...w, a: moveEndpoint(w.a), b: moveEndpoint(w.b) });
+  if (proposed.some(w => distance(w.a, w.b) < 1)) throw new Error("This move would collapse an attached wall. Choose a different position.");
+  const walls = constrainWallAngles(plan.walls, proposed, new Map(movedWalls.map(w => [w.id, translate(lerp(w.a, w.b, .5))])));
+  if (!walls) throw new Error("This move cannot keep the existing 90° wall junctions connected. Choose a different position.");
   if (walls.some(w => distance(w.a, w.b) < 1)) throw new Error("This move would collapse an attached wall. Choose a different position.");
   const openings = plan.openings.map(o => {
     if (!has("opening", o.id) || has("wall", o.wallId)) return o;

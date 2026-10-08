@@ -60,7 +60,7 @@ export function PropertyPanel({ plan, selection, selections, rooms, commit, remo
       }} />
       <p className="fp-field-note">{formatLength(distance(wall.a, wall.b))} · centerline measurement</p>
       <div className="fp-property-grid"><NumberField label="Start X" value={wall.a.x} onChange={n => commit(moveWallPoint(plan, wall.id, "a", { ...wall.a, x: n }))} /><NumberField label="Start Y" value={wall.a.y} onChange={n => commit(moveWallPoint(plan, wall.id, "a", { ...wall.a, y: n }))} /><NumberField label="End X" value={wall.b.x} onChange={n => commit(moveWallPoint(plan, wall.id, "b", { ...wall.b, x: n }))} /><NumberField label="End Y" value={wall.b.y} onChange={n => commit(moveWallPoint(plan, wall.id, "b", { ...wall.b, y: n }))} /></div>
-      <p className="fp-field-note">Drag either endpoint to reshape. Shared corners move together. Openings follow their wall; openings that no longer fit are removed.</p>
+      <p className="fp-field-note">Drag either endpoint to reshape. Existing 90° corners stay square and connected walls stretch to fit. Openings follow their wall; openings that no longer fit are removed.</p>
     </> : null}
     {fixture ? <>
       <div className="fp-property-grid"><NumberField label="Width" value={fixture.width} min={1} max={600} onChange={n => updateFixture({ width: n })} /><NumberField label="Depth" value={fixture.depth} min={1} max={600} onChange={n => updateFixture({ depth: n })} /><NumberField label="Position X" value={fixture.x} onChange={n => updateFixture({ x: n })} /><NumberField label="Position Y" value={fixture.y} onChange={n => updateFixture({ y: n })} /></div>
