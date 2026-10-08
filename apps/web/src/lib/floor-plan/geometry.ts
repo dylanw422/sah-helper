@@ -202,11 +202,59 @@ export function snapPoint(p: Point, walls: Wall[], grid: number, tolerance: numb
   if (closest && closest.distance < tolerance) result = closest.point;
   return result;
 }
-export function fitOpening(wall: Wall, width: number, t: number, others: Opening[] = [], exclude?: string) {
+export const OPENING_WALL_CLEARANCE = 4;
+
+// Project the adjacent wall body onto the host, across both faces of the host
+// wall. Clipping its finite rectangle also handles angled corners and T joints.
+function adjacentWallSpan(host: Wall, other: Wall): [number, number] | null {
+  const length = distance(host.a, host.b), otherLength = distance(other.a, other.b);
+  if (!length || !otherLength || host.id === other.id) return null;
+  const ux = (host.b.x - host.a.x) / length, uy = (host.b.y - host.a.y) / length;
+  const vx = (other.b.x - other.a.x) / otherLength, vy = (other.b.y - other.a.y) / otherLength;
+  // Collinear wall segments are a continued wall, not a corner obstruction.
+  if (Math.abs(ux * vy - uy * vx) < 1e-6) return null;
+  const local = (p: Point): Point => ({ x: (p.x - host.a.x) * ux + (p.y - host.a.y) * uy, y: -(p.x - host.a.x) * uy + (p.y - host.a.y) * ux });
+  const half = other.thickness / 2;
+  let polygon = [
+    { x: other.a.x - vy * half, y: other.a.y + vx * half },
+    { x: other.b.x - vy * half, y: other.b.y + vx * half },
+    { x: other.b.x + vy * half, y: other.b.y - vx * half },
+    { x: other.a.x + vy * half, y: other.a.y - vx * half },
+  ].map(local);
+  for (const sign of [-1, 1]) {
+    const clipped: Point[] = [], limit = host.thickness / 2;
+    for (let i = 0; i < polygon.length; i++) {
+      const a = polygon[i], b = polygon[(i + 1) % polygon.length];
+      const insideA = sign * a.y <= limit, insideB = sign * b.y <= limit;
+      if (insideA) clipped.push(a);
+      if (insideA !== insideB) clipped.push(lerp(a, b, (sign * limit - a.y) / (b.y - a.y)));
+    }
+    polygon = clipped;
+  }
+  return polygon.length ? [Math.min(...polygon.map(p => p.x)), Math.max(...polygon.map(p => p.x))] : null;
+}
+
+export function fitOpening(wall: Wall, width: number, t: number, others: Opening[] = [], exclude?: string, context?: { kind: Opening["kind"]; walls: Wall[] }) {
   const length = distance(wall.a, wall.b);
-  if (width + 2 > length) return null;
-  const half = width / 2 / length;
-  const pos = Math.max(half + 1 / length, Math.min(1 - half - 1 / length, t));
+  const clearance = OPENING_WALL_CLEARANCE, half = width / 2;
+  if (width + clearance * 2 > length) return null;
+  let spans: [number, number][] = [[half + clearance, length - half - clearance]];
+  if (context) for (const other of context.walls) {
+    const obstruction = adjacentWallSpan(wall, other);
+    if (!obstruction) continue;
+    const left = obstruction[0] - half - clearance, right = obstruction[1] + half + clearance;
+    spans = spans.flatMap(([a, b]): [number, number][] => {
+      if (right <= a || left >= b) return [[a, b]];
+      const remaining: [number, number][] = [];
+      if (left >= a) remaining.push([a, left]);
+      if (right <= b) remaining.push([right, b]);
+      return remaining;
+    });
+  }
+  if (!spans.length) return null;
+  const target = t * length;
+  const center = spans.map(([a, b]) => Math.max(a, Math.min(b, target))).sort((a, b) => Math.abs(a - target) - Math.abs(b - target))[0];
+  const pos = center / length;
   if (others.some(o => o.wallId === wall.id && o.id !== exclude && Math.abs(o.t - pos) * length < (o.width + width) / 2 + 1)) return null;
   return pos;
 }
@@ -228,7 +276,7 @@ export function normalizeOpenings(walls: Wall[], openings: Opening[]) {
   for (const o of openings) {
     const w = walls.find(w => w.id === o.wallId);
     if (!w) continue;
-    const t = fitOpening(w, o.width, o.t, accepted);
+    const t = fitOpening(w, o.width, o.t, accepted, undefined, { kind: o.kind, walls });
     if (t !== null) accepted.push({ ...o, t });
   }
   return accepted;

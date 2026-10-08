@@ -12,6 +12,7 @@ import { editDimension } from "@/lib/floor-plan/edit-dimension";
 import { detectRooms, distance, normalizeOpenings, planBounds, project } from "@/lib/floor-plan/geometry";
 import { printBounds, printLayout, type PdfScale } from "@/lib/floor-plan/print";
 import { roofLayouts } from "@/lib/floor-plan/roof";
+import { deleteSelection, moveSelection, visibleSelections, selectionKey } from "@/lib/floor-plan/selection";
 import { DEFAULT_LAYERS, formatLength, id, parsePlan, type Layers, type Plan, type Selection, type Tool } from "@/lib/floor-plan/model";
 import { FixtureSymbol } from "./fixture-symbol";
 import { PlanCanvas, type DrawSettings } from "./plan-canvas";
@@ -74,7 +75,9 @@ function Dialog({ title, onClose, children }: { title: string; onClose: () => vo
 export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, initialPlanId, initialStage, startNew = false, onClientPlanCreated, onExit }: { storageKey: string; clientPlans?: ClientPlanGateway; initialClientId?: string; initialPlanId?: string; initialStage?: PlanStage; startNew?: boolean; onClientPlanCreated?: (id?: string) => void; onExit?: () => void }) {
   const doc = usePlanDocument(storageKey);
   const { plan, commit } = doc;
-  const [tool, setTool] = useState<Tool>("select"), [selection, setSelection] = useState<Selection | null>(null);
+  const [tool, setTool] = useState<Tool>("select"), [selections, setSelections] = useState<Selection[]>([]);
+  const selection = selections.length === 1 ? selections[0] : null;
+  const setSelection = useCallback((s: Selection | null) => setSelections(s ? [s] : []), []);
   const [tab, setTab] = useState<SidebarTab>("build"), [category, setCategory] = useState<CatalogCategory>("Furniture");
   const [search, setSearch] = useState(""), [catalogId, setCatalogId] = useState("queen-bed"), [placementRotation, setPlacementRotation] = useState(0);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS), [layers, setLayers] = useState(DEFAULT_LAYERS);
@@ -105,21 +108,16 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
   }, [notice]);
   useEffect(() => { setSelection(null); setTool("select"); }, [plan.id]);
   useEffect(() => {
-    if (!selection) return;
-    const items = selection.type === "wall" ? plan.walls : selection.type === "opening" ? plan.openings : selection.type === "fixture" ? plan.fixtures : selection.type === "utility" ? plan.utilities : selection.type === "text" ? plan.notes : rooms;
-    if (!items.some(item => item.id === selection.id)) setSelection(null);
-  }, [plan, rooms, selection]);
+    const visible = new Set(visibleSelections(plan, layers).map(selectionKey));
+    setSelections(previous => {
+      const next = previous.filter(s => s.type === "room" ? rooms.some(r => r.id === s.id) : visible.has(selectionKey(s)));
+      return next.length === previous.length ? previous : next;
+    });
+  }, [plan, rooms, layers]);
   const chooseTool = (next: Tool) => { setTool(next); if (next !== "select") setSelection(null); };
   const remove = () => {
-    if (!selection || selection.type === "room") return;
-    const sid = selection.id;
-    commit({ ...plan,
-      walls: selection.type === "wall" ? plan.walls.filter(w => w.id !== sid) : plan.walls,
-      openings: plan.openings.filter(o => !(selection.type === "opening" && o.id === sid) && !(selection.type === "wall" && o.wallId === sid)),
-      fixtures: selection.type === "fixture" ? plan.fixtures.filter(f => f.id !== sid) : plan.fixtures,
-      utilities: selection.type === "utility" ? plan.utilities.filter(u => u.id !== sid) : plan.utilities,
-      notes: selection.type === "text" ? plan.notes.filter(n => n.id !== sid) : plan.notes,
-    }); setSelection(null);
+    if (!selections.some(s => s.type !== "room")) return;
+    commit(deleteSelection(plan, selections)); setSelection(null);
   };
   const duplicate = () => {
     if (selection?.type === "text") {
@@ -143,6 +141,12 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
     else rotateSelection();
   };
   const nudge = (key: string, precise: boolean) => {
+    if (selections.length > 1) {
+      const amount = precise ? 1 : settings.grid;
+      try { commit(moveSelection(plan, selections, { x: key === "ArrowLeft" ? -amount : key === "ArrowRight" ? amount : 0, y: key === "ArrowUp" ? -amount : key === "ArrowDown" ? amount : 0 })); }
+      catch (e) { error(e instanceof Error ? e.message : "The selection could not be moved."); }
+      return;
+    }
     if (!selection || selection.type === "room" || selection.type === "opening") return;
     const amount = precise ? 1 : settings.grid;
     const dx = key === "ArrowLeft" ? -amount : key === "ArrowRight" ? amount : 0, dy = key === "ArrowUp" ? -amount : key === "ArrowDown" ? amount : 0;
@@ -156,8 +160,8 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
       if (walls.every(w => distance(w.a, w.b) >= 1)) commit({ ...plan, walls, openings: normalizeOpenings(walls, plan.openings) });
     }
   };
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+  const keyboardHandler = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyboardHandler.current = (e: KeyboardEvent) => {
       if (modal || loadingPlan) return;
       const target = e.target as HTMLElement;
       if (target?.matches("input, textarea, select") || target?.isContentEditable) return;
@@ -165,17 +169,20 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
       if (modifier && key === "z") { e.preventDefault(); if (e.shiftKey) doc.redo(); else doc.undo(); return; }
       if (modifier && key === "y") { e.preventDefault(); doc.redo(); return; }
       if (modifier && key === "d") { e.preventDefault(); duplicate(); return; }
+      if (modifier && key === "a" && tool === "select") { e.preventDefault(); setSelections(visibleSelections(plan, layers)); return; }
       if (modifier) return;
       if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); remove(); return; }
       if (e.key === "Escape") { chooseTool("select"); setSelection(null); setLeftOpen(false); setRightOpen(false); return; }
-      if (e.key.startsWith("Arrow") && selection) { e.preventDefault(); nudge(e.key, e.shiftKey); return; }
+      if (e.key.startsWith("Arrow") && selections.length) { e.preventDefault(); nudge(e.key, e.shiftKey); return; }
       if (key === "r") { rotate(); return; }
       if (key === "?") { setModal("help"); return; }
       const next = TOOLS.find(t => t.shortcut.toLowerCase() === key);
       if (next) { chooseTool(next.id); if (["exterior", "interior", "rectangle", "door", "window", "text"].includes(next.id)) setTab("build"); }
-    };
+  };
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => keyboardHandler.current(e);
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  });
+  }, []);
   const select = useCallback((s: Selection | null) => { setSelection(s); }, []);
   const pickCatalogItem = (catalogId: string) => {
     setCatalogId(catalogId); chooseTool("fixture"); setPlacementRotation(0); setLayers(l => ({ ...l, fixtures: true })); setLeftOpen(false);
@@ -329,8 +336,13 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
         </div>
         <div className="fp-panel-footer"><span className="fp-kicker">Active tool</span><span><span className="fp-active-dot" />{activeToolName}</span>{tool === "fixture" ? <button aria-label="Rotate object preview" onClick={rotate}>Rotate {placementRotation}° <kbd>R</kbd></button> : null}</div>
       </aside>
-      <PlanCanvas key={plan.id} plan={plan} tool={tool} settings={settings} layers={layers} selection={selection} catalogId={catalogId} placementRotation={placementRotation} commit={commit} select={select} error={error} onZoom={setZoom} dimensionEditingAllowed={modal === null && !loadingPlan} onDimensionApply={(id, inches, fixedEnd) => commit(editDimension(plan, id, inches, fixedEnd))} onTextPlaced={() => { chooseTool("select"); setRightOpen(true); setLeftOpen(false); setLayers(l => ({ ...l, notes: true })); }} />
-      <aside className={`fp-right-panel ${rightOpen ? "is-open" : ""}`} aria-label="Properties and plan summary"><div className="fp-inspector-heading"><Settings2 size={15} /><span>Properties</span><button className="fp-icon-button" aria-label="Clear selection" onClick={() => setSelection(null)}><X size={14} /></button></div><div className="fp-inspector-scroll"><PropertyPanel plan={plan} selection={selection} rooms={rooms} commit={commit} remove={remove} duplicate={duplicate} rotate={rotateSelection} error={error} /></div><div className="fp-plan-summary"><div className="fp-plan-details">{cloud.link && cloud.link.stage !== "archive" ? <div className="fp-plan-workflow"><span className="fp-kicker">Client plans · Before → After</span><div role="group" aria-label="Client plan stages">{(["before", "after"] as const).map(stage => <button key={stage} aria-label={stage === "before" ? "Open Before plan" : afterPlan ? "Open After plan" : "Start After plan"} aria-pressed={cloud.link?.stage === stage} disabled={cloud.busy || loadingPlan || clientPair === undefined || (stage === "after" && !afterPlan && !(cloud.link?.stage === "before" ? plan.walls.length : beforePlan?.wallCount))} onClick={() => void switchClientStage(stage)}><strong>{STAGE_NAMES[stage]}</strong><small>{stage === "before" ? "Existing home" : afterPlan ? "Proposed changes" : "Copy from Before"}</small></button>)}</div><p>{cloud.link.stage === "before" ? "Draw the existing home, then start After from a saved copy." : "Draw the proposed changes. Before is saved separately."}</p></div> : null}<label className="fp-field"><span>Plan name</span><PlanName name={plan.name} onChange={name => commit({ ...plan, name })} /></label>{cloud.link ? <button className="fp-client-badge" aria-label="Change plan client" onClick={() => setModal("save-client")}><Cloud size={11} />{cloud.link.clientName}</button> : null}<span className={`fp-save-status ${cloud.error || (!cloud.link && doc.saveStatus === "error") ? "is-error" : ""}`} title={cloud.link ? `Saved with ${cloud.link.clientName}` : "Local draft; choose Save plan to link a client"}><span />{saveLabel}</span></div><span className="fp-kicker">Plan at a glance</span><div className="fp-area"><strong>{totalArea.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong><span>sq ft<small>usable floor area</small></span></div><div className="fp-summary-counts"><span><strong>{rooms.length}</strong> rooms</span><span><strong>{plan.walls.length}</strong> walls</span><span><strong>{plan.fixtures.length}</strong> objects</span></div><button className={`fp-roof-status ${roofs.length && !roofs.some(r => r.error) ? "is-ready" : ""}`} aria-label="Open roof settings" onClick={() => { setTab("layers"); setLeftOpen(true); setRightOpen(false); }}><House size={14} /><span>{roofs.some(r => r.error) ? "Review roof layout" : roofs.length ? `${plan.roofType === "hip" ? "Hip" : "Gable"} roof generated` : "Close exterior walls for roof"}</span>{roofs.length && !roofs.some(r => r.error) ? <Check size={13} /> : <ChevronRight size={13} />}</button></div></aside>
+      <PlanCanvas key={plan.id} plan={plan} tool={tool} settings={settings} layers={layers} selection={selection} selections={selections} selectMany={setSelections} catalogId={catalogId} placementRotation={placementRotation} commit={commit} select={select} error={error} onZoom={setZoom} dimensionEditingAllowed={modal === null && !loadingPlan} onDimensionApply={(id, inches, fixedEnd) => commit(editDimension(plan, id, inches, fixedEnd))} onTextPlaced={() => { chooseTool("select"); setRightOpen(true); setLeftOpen(false); setLayers(l => ({ ...l, notes: true })); }} />
+      <aside className={`fp-right-panel ${rightOpen ? "is-open" : ""}`} aria-label={selections.length ? "Selection properties" : "Plan details"}>
+        <div className="fp-inspector-heading">{selections.length ? <Settings2 size={15} /> : <House size={15} />}<span>{selections.length ? "Properties" : "Plan details"}</span>{selections.length ? <button className="fp-icon-button" aria-label="Clear selection" onClick={() => setSelection(null)}><X size={14} /></button> : null}</div>
+        <div className="fp-inspector-scroll">{selections.length ? <PropertyPanel plan={plan} selections={selections} selection={selection} rooms={rooms} commit={commit} remove={remove} duplicate={duplicate} rotate={rotateSelection} error={error} /> : (
+          <div className="fp-plan-summary"><div className="fp-plan-details">{cloud.link && cloud.link.stage !== "archive" ? <div className="fp-plan-workflow"><span className="fp-kicker">Client plans · Before → After</span><div role="group" aria-label="Client plan stages">{(["before", "after"] as const).map(stage => <button key={stage} aria-label={stage === "before" ? "Open Before plan" : afterPlan ? "Open After plan" : "Start After plan"} aria-pressed={cloud.link?.stage === stage} disabled={cloud.busy || loadingPlan || clientPair === undefined || (stage === "after" && !afterPlan && !(cloud.link?.stage === "before" ? plan.walls.length : beforePlan?.wallCount))} onClick={() => void switchClientStage(stage)}><strong>{STAGE_NAMES[stage]}</strong><small>{stage === "before" ? "Existing home" : afterPlan ? "Proposed changes" : "Copy from Before"}</small></button>)}</div><p>{cloud.link.stage === "before" ? "Draw the existing home, then start After from a saved copy." : "Draw the proposed changes. Before is saved separately."}</p></div> : null}<label className="fp-field"><span>Plan name</span><PlanName name={plan.name} onChange={name => commit({ ...plan, name })} /></label>{cloud.link ? <button className="fp-client-badge" aria-label="Change plan client" onClick={() => setModal("save-client")}><Cloud size={11} />{cloud.link.clientName}</button> : null}<span className={`fp-save-status ${cloud.error || (!cloud.link && doc.saveStatus === "error") ? "is-error" : ""}`} title={cloud.link ? `Saved with ${cloud.link.clientName}` : "Local draft; choose Save plan to link a client"}><span />{saveLabel}</span></div><span className="fp-kicker">Plan at a glance</span><div className="fp-area"><strong>{totalArea.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong><span>sq ft<small>usable floor area</small></span></div><div className="fp-summary-counts"><span><strong>{rooms.length}</strong> rooms</span><span><strong>{plan.walls.length}</strong> walls</span><span><strong>{plan.fixtures.length}</strong> objects</span></div><button className={`fp-roof-status ${roofs.length && !roofs.some(r => r.error) ? "is-ready" : ""}`} aria-label="Open roof settings" onClick={() => { setTab("layers"); setLeftOpen(true); setRightOpen(false); }}><House size={14} /><span>{roofs.some(r => r.error) ? "Review roof layout" : roofs.length ? `${plan.roofType === "hip" ? "Hip" : "Gable"} roof generated` : "Close exterior walls for roof"}</span>{roofs.length && !roofs.some(r => r.error) ? <Check size={13} /> : <ChevronRight size={13} />}</button></div>
+        )}</div>
+      </aside>
     </div>
     <footer className="fp-statusbar"><div><span className="fp-level-indicator" />Level 1<span className="fp-status-divider" />{rooms.length} enclosed rooms<span className="fp-status-divider" /><span className="fp-status-extent">{plan.walls.length ? `${formatLength(box.width)} × ${formatLength(box.height)}` : "Ready to draw"}</span></div><div><button className={settings.snap ? "is-active" : ""} aria-pressed={settings.snap} onClick={() => setSettings(s => ({ ...s, snap: !s.snap }))}>Snap {settings.snap ? "on" : "off"}</button><label>Grid <select aria-label="Grid spacing" value={settings.grid} onChange={e => setSettings(s => ({ ...s, grid: Number(e.target.value) }))}><option value={1}>1″</option><option value={3}>3″</option><option value={6}>6″</option><option value={12}>12″</option></select></label><button className={settings.orthogonal ? "is-active" : ""} aria-pressed={settings.orthogonal} onClick={() => setSettings(s => ({ ...s, orthogonal: !s.orthogonal }))}>Ortho {settings.orthogonal ? "on" : "off"}</button><span className="fp-status-divider" /><span className="fp-status-zoom">{Math.round(zoom * 100)}%</span></div></footer>
     {loadingPlan ? <div className="fp-loading-overlay" role="status"><Cloud size={20} />Opening client plan…</div> : null}

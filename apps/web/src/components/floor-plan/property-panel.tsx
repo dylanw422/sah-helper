@@ -3,7 +3,7 @@
 import { Copy, FlipHorizontal, RotateCw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
-import { bounds, distance, fitOpening, moveWallPoint, type Room } from "@/lib/floor-plan/geometry";
+import { bounds, distance, fitOpening, moveWallPoint, normalizeOpenings, type Room } from "@/lib/floor-plan/geometry";
 import { FINISHES, formatLength, type Plan, type Selection, type TextNote } from "@/lib/floor-plan/model";
 
 function NoteText({ note, onChange }: { note: TextNote; onChange: (text: string) => void }) {
@@ -17,16 +17,21 @@ export function NumberField({ label, value, min = -120000, max = 120000, step = 
   useEffect(() => setDraft(String(Math.round(value * 1000) / 1000)), [value]);
   const submit = () => {
     const n = Number(draft);
-    if (draft.trim() && Number.isFinite(n) && n >= min && n <= max) onChange(n);
+    if (draft.trim() !== String(Math.round(value * 1000) / 1000) && draft.trim() && Number.isFinite(n) && n >= min && n <= max) onChange(n);
     setDraft(String(Math.round(value * 1000) / 1000));
   };
   return <label className="fp-field"><span>{label}</span><div className="fp-number"><input aria-label={label} type="number" min={min} max={max} step={step} value={draft} onChange={e => setDraft(e.target.value)} onBlur={submit} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /><span>{suffix}</span></div></label>;
 }
 
-export function PropertyPanel({ plan, selection, rooms, commit, remove, duplicate, rotate, error }: {
-  plan: Plan; selection: Selection | null; rooms: Room[]; commit: (plan: Plan) => void;
+export function PropertyPanel({ plan, selection, selections, rooms, commit, remove, duplicate, rotate, error }: {
+  plan: Plan; selection: Selection | null; selections: Selection[]; rooms: Room[]; commit: (plan: Plan) => void;
   remove: () => void; duplicate: () => void; rotate: () => void; error: (message: string) => void;
 }) {
+  if (selections.length > 1) {
+    const names = { wall: ["wall", "walls"], opening: ["opening", "openings"], fixture: ["object", "objects"], utility: ["utility run", "utility runs"], text: ["note", "notes"], room: ["room", "rooms"] };
+    const counts = Object.entries(names).map(([type, name]) => { const count = selections.filter(s => s.type === type).length; return count ? `${count} ${name[count === 1 ? 0 : 1]}` : null; }).filter(Boolean);
+    return <div className="fp-properties"><div className="fp-properties-heading"><span className="fp-kicker">Group selection</span><h3>{selections.length} elements selected</h3></div><p className="fp-field-note">{counts.join(" · ")}</p><p className="fp-field-note">Drag any selected element to move the group. Arrow keys nudge; Shift + arrows move 1 inch. Shift-click adds or removes an element.</p><div className="fp-property-actions"><button className="fp-button fp-danger fp-wide" onClick={remove}><Trash2 size={15} />Delete selected</button></div></div>;
+  }
   if (!selection) return <div className="fp-empty-properties"><span className="fp-crosshair">⌖</span><p>Select an element<br />to edit its properties.</p><small>Click a wall, fixture, opening,<br />or room to edit its properties.</small></div>;
   const wall = selection.type === "wall" ? plan.walls.find(w => w.id === selection.id) : undefined;
   const fixture = selection.type === "fixture" ? plan.fixtures.find(f => f.id === selection.id) : undefined;
@@ -40,15 +45,15 @@ export function PropertyPanel({ plan, selection, rooms, commit, remove, duplicat
   const updateOpening = (patch: Partial<NonNullable<typeof opening>>) => {
     if (!opening) return;
     const w = plan.walls.find(w => w.id === opening.wallId)!;
-    const updated = { ...opening, ...patch }, t = fitOpening(w, updated.width, updated.t, plan.openings, opening.id);
-    if (t === null) { error("This opening does not fit, or overlaps another opening."); return; }
+    const updated = { ...opening, ...patch }, t = fitOpening(w, updated.width, updated.t, plan.openings, opening.id, { kind: updated.kind, walls: plan.walls });
+    if (t === null) { error("Doors and windows need 4″ of clearance from adjacent walls and must not overlap another opening."); return; }
     commit({ ...plan, openings: plan.openings.map(o => o.id === opening.id ? { ...updated, t } : o) });
   };
   return <div className="fp-properties">
     <div className="fp-properties-heading"><span className="fp-kicker">Selected element</span><h3>{title}</h3></div>
     {wall ? <>
       <label className="fp-field"><span>Wall type</span><select aria-label="Wall type" value={wall.kind} onChange={e => commit({ ...plan, walls: plan.walls.map(w => w.id === wall.id ? { ...w, kind: e.target.value as "interior" | "exterior" } : w) })}><option value="exterior">Exterior</option><option value="interior">Interior</option></select></label>
-      <NumberField label="Wall thickness" value={wall.thickness} min={1} max={24} step={0.5} onChange={n => commit({ ...plan, walls: plan.walls.map(w => w.id === wall.id ? { ...w, thickness: n } : w) })} />
+      <NumberField label="Wall thickness" value={wall.thickness} min={1} max={24} step={0.5} onChange={n => { const walls = plan.walls.map(w => w.id === wall.id ? { ...w, thickness: n } : w); commit({ ...plan, walls, openings: normalizeOpenings(walls, plan.openings) }); }} />
       <NumberField label="Wall length" value={distance(wall.a, wall.b)} min={6} max={12000} onChange={n => {
         const length = distance(wall.a, wall.b);
         commit(moveWallPoint(plan, wall.id, "b", { x: wall.a.x + (wall.b.x - wall.a.x) * n / length, y: wall.a.y + (wall.b.y - wall.a.y) * n / length }));
@@ -65,7 +70,7 @@ export function PropertyPanel({ plan, selection, rooms, commit, remove, duplicat
     {opening ? <>
       <NumberField label="Opening width" value={opening.width} min={6} max={240} onChange={n => updateOpening({ width: n })} />
       <NumberField label="Position along wall" value={opening.t * distance(plan.walls.find(w => w.id === opening.wallId)!.a, plan.walls.find(w => w.id === opening.wallId)!.b)} min={0} max={12000} onChange={n => { const w = plan.walls.find(w => w.id === opening.wallId)!; updateOpening({ t: n / distance(w.a, w.b) }); }} />
-      <p className="fp-field-note">Position measures from the wall start to the center of the opening. Drag along the wall to reposition.</p>
+      <p className="fp-field-note">Position measures from the wall start to the center of the opening. Drag along the wall to reposition. Jambs stay at least 4″ from adjacent wall faces.</p>
       {opening.kind === "door" ? <>
         <div className="fp-door-controls">
           <button className="fp-button fp-wide" aria-pressed={opening.hinge === "right"} title={`Current hinge: ${opening.hinge ?? "left"} jamb`} onClick={() => updateOpening({ hinge: opening.hinge === "right" ? "left" : "right" })}><FlipHorizontal size={15} />Flip hinge side</button>

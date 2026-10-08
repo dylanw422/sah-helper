@@ -144,6 +144,7 @@
 .fp-canvas-controls > span { height: 16px; width: 1px; background: var(--fp-hover); margin: 0 4px; }
 .fp-canvas-controls output { padding: 0 6px; min-width: 44px; text-align: center; color: var(--fp-muted); font-family: var(--font-geist-mono), monospace; font-size: 10px; }
 .fp-canvas-hint { position: absolute; bottom: 14px; left: 0; right: 0; padding: 0 12px; text-align: center; pointer-events: none; color: var(--fp-muted); font-size: 9px; }
+.fp-selection-count { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 6px 10px; border: 1px solid var(--fp-border); border-radius: 4px; background: var(--fp-panel); color: var(--fp-accent-text); font-size: 10px; text-align: center; pointer-events: none; }
 .fp-coordinates { position: absolute; bottom: 44px; left: 18px; pointer-events: none; color: var(--fp-muted); font-family: var(--font-geist-mono), monospace; font-size: 9px; }
 .fp-right-panel { z-index: 15; display: flex; flex-direction: column; flex: 0 0 240px; width: 240px; min-height: 0; border-left: 1px solid var(--fp-border); background: var(--fp-panel); }
 .fp-inspector-heading { display: flex; align-items: center; gap: 9px; padding: 13px 16px; flex: 0 0 48px; border-bottom: 1px solid var(--fp-border); color: var(--fp-muted); font-size: 11px; }
@@ -184,7 +185,7 @@
 .fp-measure-card { display: flex; flex-direction: column; gap: 6px; padding: 14px; margin-top: 19px; border: 1px solid var(--fp-hover); background: var(--fp-accent-soft); border-radius: 4px; color: var(--fp-muted); font-size: 10px; }
 .fp-measure-card strong { color: var(--fp-secondary); font-family: var(--font-geist-mono), monospace; font-size: 22px; letter-spacing: -.05em; font-weight: 400; }
 .fp-measure-card strong small { font-size: 11px; font-weight: 400; }
-.fp-plan-summary { padding: 20px 16px 16px; flex-shrink: 0; border-top: 1px solid var(--fp-border); background: var(--fp-panel); }
+.fp-plan-summary { padding: 20px 16px 16px; background: var(--fp-panel); }
 .fp-area { display: flex; align-items: center; gap: 11px; margin: 10px 0 15px; }
 .fp-area strong { color: var(--fp-secondary); font-family: var(--font-geist-mono), monospace; font-size: 31px; font-weight: 400; letter-spacing: -.08em; line-height: 1; }
 .fp-area > span { color: var(--fp-muted); font-size: 11px; }

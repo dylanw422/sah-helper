@@ -38,10 +38,10 @@ export function dimensionOpening(plan: Plan, dim: Dimension) {
   return a && a.opening.id === b?.opening.id ? a.opening : undefined;
 }
 
-function validateOpening(wall: Wall, opening: Opening, others: Opening[]) {
-  const t = fitOpening(wall, opening.width, opening.t, others, opening.id);
+function validateOpening(wall: Wall, opening: Opening, others: Opening[], walls: Wall[]) {
+  const t = fitOpening(wall, opening.width, opening.t, others, opening.id, { kind: opening.kind, walls });
   if (t === null || Math.abs(t - opening.t) * distance(wall.a, wall.b) > EPS)
-    throw new Error("This size would move an opening beyond the wall or overlap another opening. Choose a larger span or reposition the opening first.");
+    throw new Error("This size would move an opening beyond the wall, overlap another opening, or leave less than 4″ between a door or window and an adjacent wall. Choose a larger span or reposition the opening first.");
 }
 
 function boundaryAt(plan: Plan, dim: Dimension, p: Point, direction: Point) {
@@ -111,7 +111,7 @@ function moveAttachedWalls(plan: Plan, movingWalls: Wall[], movingPoint: Point |
     const shift = distance(da, db) < EPS ? da : subtract(average, { x: oldDirection.x * dot(average, oldDirection), y: oldDirection.y * dot(average, oldDirection) });
     return { ...opening, t: project(add(center, shift), wall.a, wall.b).t };
   });
-  for (const opening of openings) validateOpening(walls.find(w => w.id === opening.wallId)!, opening, openings);
+  for (const opening of openings) validateOpening(walls.find(w => w.id === opening.wallId)!, opening, openings, walls);
   return { ...plan, walls, openings };
 }
 
@@ -129,7 +129,7 @@ export function editDimension(plan: Plan, dimensionId: string, inches: number, f
     const shift = (inches - opening.width) / 2 * (fixedEnd === "start" ? 1 : -1);
     const center = add(lerp(wall.a, wall.b, opening.t), { x: direction.x * shift, y: direction.y * shift });
     const updated = { ...opening, width: inches, t: project(center, wall.a, wall.b).t };
-    validateOpening(wall, updated, plan.openings);
+    validateOpening(wall, updated, plan.openings, plan.walls);
     return { ...plan, openings: plan.openings.map(o => o.id === widthId ? updated : o) };
   }
   const moving = fixedEnd === "start" ? end : start, sign = fixedEnd === "start" ? 1 : -1;
@@ -143,7 +143,7 @@ export function editDimension(plan: Plan, dimensionId: string, inches: number, f
     if (jamb) {
       const center = add(lerp(jamb.wall.a, jamb.wall.b, jamb.opening.t), displacement);
       const updated = { ...jamb.opening, t: project(center, jamb.wall.a, jamb.wall.b).t };
-      validateOpening(jamb.wall, updated, plan.openings);
+      validateOpening(jamb.wall, updated, plan.openings, plan.walls);
       return { ...plan, openings: plan.openings.map(o => o.id === updated.id ? updated : o) };
     }
     return moveAttachedWalls(plan, run, endpoint, displacement);

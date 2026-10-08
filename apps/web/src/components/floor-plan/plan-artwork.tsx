@@ -4,6 +4,8 @@ import { automaticDimensions, wallSegments, type Dimension } from "@/lib/floor-p
 import { bounds, detectRooms, distance, fixtureCorners, lerp, pointInPolygon, polygonString, type Room } from "@/lib/floor-plan/geometry";
 import { roofLayouts } from "@/lib/floor-plan/roof";
 import { noteLayout } from "@/lib/floor-plan/notes";
+import { selectionKey } from "@/lib/floor-plan/selection";
+import { dimensionOpening } from "@/lib/floor-plan/edit-dimension";
 import { formatLength, type Layers, type Plan, type Point, type Selection } from "@/lib/floor-plan/model";
 import { FixtureSymbol } from "./fixture-symbol";
 
@@ -63,8 +65,8 @@ export function PlanDefs({ prefix, dark = false, monochrome = false }: { prefix:
   </defs>;
 }
 
-export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, scale = 1, prefix = "plan", rooms: suppliedRooms, theme = "paper", onDimensionEdit }: {
-  plan: Plan; layers: Layers; selection?: Selection | null; scale?: number; prefix?: string; rooms?: Room[]; theme?: "paper" | "dark" | "monochrome"; onDimensionEdit?: (id: string) => void;
+export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, selections, scale = 1, prefix = "plan", rooms: suppliedRooms, theme = "paper", onDimensionEdit }: {
+  plan: Plan; layers: Layers; selection?: Selection | null; selections?: Selection[]; scale?: number; prefix?: string; rooms?: Room[]; theme?: "paper" | "dark" | "monochrome"; onDimensionEdit?: (id: string) => void;
 }) {
   const dark = theme === "dark", monochrome = theme === "monochrome";
   const paint = artworkPalette(dark, monochrome);
@@ -74,7 +76,8 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
   const wallInk = useMemo(() => plan.walls.map(wall => ({ wall, segments: wallSegments(wall, plan) })), [plan.walls, plan.openings]);
   const obstacles = useMemo(() => layers.fixtures ? plan.fixtures.filter(f => CATALOG_MAP.get(f.catalogId)?.category !== "Electrical").map(f => bounds(fixtureCorners(f))) : [], [plan.fixtures, layers.fixtures]);
   const fontSize = Math.max(5, Math.min(10, 10 / scale));
-  const selected = (type: Selection["type"], id: string) => selection?.type === type && selection.id === id;
+  const selectedKeys = useMemo(() => new Set((selections ?? (selection ? [selection] : [])).map(selectionKey)), [selection, selections]);
+  const selected = (type: Selection["type"], id: string) => selectedKeys.has(`${type}:${id}`);
   return <>
     <PlanDefs prefix={prefix} dark={dark} monochrome={monochrome} />
     <g data-layer="rooms">{detected.map(room => {
@@ -141,13 +144,13 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
         {rows.map((row, index) => <text key={index} y={(index - (rows.length - 1) / 2) * fontSize * 1.45 + fontSize * 0.35} fontSize={fontSize * (index === 0 ? 1.13 : index === 1 ? 0.9 : 0.82)} fontWeight={index === 0 ? 600 : undefined}>{row}</text>)}
       </g>;
     })}</g> : null}
-    {layers.dimensions ? <g data-layer="dimensions">{dims.map(dim => <DimensionMark key={dim.id} dim={dim} dark={dark} monochrome={monochrome} fontSize={fontSize * (dim.overall ? 1.3 : 1.1)} scale={scale} onEdit={onDimensionEdit} />)}</g> : null}
+    {layers.dimensions ? <g data-layer="dimensions">{dims.map(dim => <DimensionMark key={dim.id} dim={dim} dark={dark} monochrome={monochrome} fontSize={fontSize * (dim.overall ? 1.3 : 1.1)} scale={scale} onEdit={onDimensionEdit && !dimensionOpening(plan, dim) ? onDimensionEdit : undefined} />)}</g> : null}
     {layers.notes ? <g data-layer="notes">{plan.notes.map(note => {
       const layout = noteLayout(note), active = selected("text", note.id);
       return <g key={note.id} data-kind="text" data-id={note.id} transform={`translate(${note.x} ${note.y})`}>
         <rect width={note.width} height={layout.height} fill={paint("#1c1e25", "#fafbf7", "#fff")} fillOpacity={note.border ? 1 : 0} stroke={active ? paint("#818cf8", "#0e8c7c") : note.border ? paint("#a1a6bc", "#34564e") : "none"} strokeWidth={active ? 1.5 / scale : 0.8} strokeDasharray={active ? `${4 / scale} ${2 / scale}` : undefined} />
         <text fontFamily="monospace" fontSize={note.fontSize} fill={paint("#c9ccda", "#34564e")} pointerEvents="none" xmlSpace="preserve">{layout.lines.map((line, i) => <tspan key={i} x={layout.padding} y={layout.padding + note.fontSize + i * layout.lineHeight}>{line}</tspan>)}</text>
-        {active ? <rect x={note.width - 4 / scale} y={layout.height / 2 - 4 / scale} width={8 / scale} height={8 / scale} fill={paint("#22242c", "#fff", "#fff")} stroke={paint("#818cf8", "#0e8c7c")} strokeWidth={1 / scale} data-kind="text" data-id={note.id} data-end="b" style={{ cursor: "ew-resize" }} /> : null}
+        {active && (!selections || selections.length === 1) ? <rect x={note.width - 4 / scale} y={layout.height / 2 - 4 / scale} width={8 / scale} height={8 / scale} fill={paint("#22242c", "#fff", "#fff")} stroke={paint("#818cf8", "#0e8c7c")} strokeWidth={1 / scale} data-kind="text" data-id={note.id} data-end="b" style={{ cursor: "ew-resize" }} /> : null}
       </g>;
     })}</g> : null}
   </>;

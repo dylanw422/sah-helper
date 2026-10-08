@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { automaticDimensions, wallSegments } from "../apps/web/src/lib/floor-plan/dimensions";
-import { bounds, detectRooms, fitOpening, moveWallPoint, offsetPolygon, pointInPolygon, polygonArea, roofPolygons, snapPoint } from "../apps/web/src/lib/floor-plan/geometry";
+import { bounds, detectRooms, fitOpening, moveWallPoint, normalizeOpenings, offsetPolygon, pointInPolygon, polygonArea, roofPolygons, snapPoint } from "../apps/web/src/lib/floor-plan/geometry";
 import { blankPlan, DEFAULT_LAYERS, formatLength, parsePlan, starterPlan, type Point, type Wall } from "../apps/web/src/lib/floor-plan/model";
 import { clientPlanError, planFingerprint } from "../apps/web/src/lib/floor-plan/client-plans";
 import { roofForPolygon, roofLayouts } from "../apps/web/src/lib/floor-plan/roof";
@@ -8,6 +8,7 @@ import { roofForPolygon, roofLayouts } from "../apps/web/src/lib/floor-plan/roof
 import { A4, printBounds, printLayout } from "../apps/web/src/lib/floor-plan/print";
 import { noteLayout } from "../apps/web/src/lib/floor-plan/notes";
 import { parseLengthInput } from "../apps/web/src/lib/floor-plan/length-input";
+import { deleteSelection, moveSelection, selectInBox, selectionBounds, visibleSelections } from "../apps/web/src/lib/floor-plan/selection";
 import { dimensionEnds, editDimension } from "../apps/web/src/lib/floor-plan/edit-dimension";
 
 describe("client sync", () => {
@@ -237,11 +238,67 @@ describe("wall connections and openings", () => {
   test("openings cannot overlap or overflow wall ends", () => {
     const w = rectangle().walls[0];
     expect(fitOpening(w, 300, 0.5)).toBeNull();
-    const t = fitOpening(w, 36, 0)!; expect(t * 240).toBe(19);
+    const t = fitOpening(w, 36, 0)!; expect(t * 240).toBe(22);
     const existing = { id: "door", wallId: w.id, kind: "door" as const, width: 36, t: 0.5, flip: false };
     expect(fitOpening(w, 48, 0.5, [existing])).toBeNull();
     expect(fitOpening(w, 48, 0.25, [existing])).not.toBeNull();
     expect(fitOpening(w, 36, 0.5, [existing], existing.id)).toBe(0.5);
+  });
+  describe.each(["door", "window"] as const)("%s wall clearance", kind => {
+    test("jambs keep four inches from adjacent wall faces at either corner", () => {
+      const p = rectangle(), w = p.walls[0], context = { kind, walls: p.walls };
+      expect(fitOpening(w, 36, 0, [], undefined, context)! * 240).toBe(25);
+      expect(fitOpening(w, 36, 1, [], undefined, context)! * 240).toBe(215);
+      expect(fitOpening(w, 36, 0, [], undefined, { kind, walls: [w] })! * 240).toBe(22);
+      const reversed = { ...w, a: w.b, b: w.a };
+      expect(fitOpening(reversed, 36, 0, [], undefined, context)! * 240).toBe(25);
+    });
+    test("openings keep clearance from T junctions and crossing walls anywhere along the host", () => {
+      const p = rectangle(), w = p.walls[0];
+      for (const y of [0, -60]) {
+        const partition = wall("partition", { x: 120, y }, { x: 120, y: 120 }, "interior");
+        const context = { kind, walls: [...p.walls, partition] };
+        expect(fitOpening(w, 36, .49, [], undefined, context)! * 240).toBe(95);
+        expect(fitOpening(w, 36, .51, [], undefined, context)! * 240).toBe(145);
+        expect(fitOpening(w, 36, 95 / 240, [], undefined, context)! * 240).toBe(95);
+        expect(fitOpening(w, 36, 145 / 240, [], undefined, context)! * 240).toBe(145);
+        expect(fitOpening(w, 200, .5, [], undefined, context)).toBeNull();
+      }
+    });
+    test("angled corners measure clearance across both wall faces in any orientation", () => {
+      const host = wall("host", { x: 0, y: 0 }, { x: 240, y: 0 });
+      const adjacent = wall("angled", { x: 0, y: 0 }, { x: 100, y: 100 });
+      const expected = 18 + 4 + 3 + 3 * Math.SQRT2;
+      for (const angle of [0, Math.PI / 3, Math.PI / 2]) {
+        const transform = (p: Point) => ({ x: 42 + p.x * Math.cos(angle) - p.y * Math.sin(angle), y: -35 + p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+        const walls = [host, adjacent].map(w => ({ ...w, a: transform(w.a), b: transform(w.b) }));
+        expect(fitOpening(walls[0], 36, 0, [], undefined, { kind, walls })! * 240).toBeCloseTo(expected, 8);
+      }
+    });
+    test("continued walls and detached nearby walls do not obstruct openings", () => {
+      const host = rectangle().walls[0];
+      const walls = [host, wall("continuation", { x: 100, y: 0 }, { x: 200, y: 0 }), wall("nearby", { x: 120, y: 20 }, { x: 120, y: 80 })];
+      expect(fitOpening(host, 36, .5, [], undefined, { kind, walls })).toBe(.5);
+    });
+    test("an exactly fitting opening is allowed, while a narrower wall has no safe position", () => {
+      for (const length of [50, 49]) {
+        const walls = [wall("host", { x: 0, y: 0 }, { x: length, y: 0 }), wall("left", { x: 0, y: 0 }, { x: 0, y: 100 }), wall("right", { x: length, y: 0 }, { x: length, y: 100 })];
+        expect(fitOpening(walls[0], 36, .5, [], undefined, { kind, walls })).toBe(length === 50 ? .5 : null);
+      }
+    });
+    test("opening resizing, wall reshaping and group moves enforce the same clearance", () => {
+      const p = rectangle(), w = p.walls[0];
+      const opening = { id: "door", wallId: w.id, kind, width: 36, t: 25 / 240, flip: false };
+      p.openings.push(opening);
+      expect(fitOpening(w, 42, opening.t, p.openings, opening.id, { kind: opening.kind, walls: p.walls })! * 240).toBe(28);
+      expect(() => moveSelection(p, [{ type: "opening", id: opening.id }], { x: -1, y: 0 })).toThrow("less than 4″");
+      expect(moveSelection(p, [{ type: "opening", id: opening.id }], { x: 1, y: 0 }).openings[0].t * 240).toBe(26);
+      const walls = p.walls.map(wall => wall.id === "w3" ? { ...wall, thickness: 12 } : wall);
+      expect(normalizeOpenings(walls, p.openings)[0].t * 240).toBe(28);
+      const moved = moveWallPoint(p, w.id, "b", { x: 200, y: 0 });
+      expect(moved.openings[0].t * 200).toBe(25);
+      expect(fitOpening(w, 36, opening.t, [{ ...opening, id: "other" }], undefined, { kind: opening.kind, walls: p.walls })).toBeNull();
+    });
   });
   test("openings cut actual gaps in rendered walls and dimension chains", () => {
     const p = rectangle(), w = p.walls[0];
@@ -520,6 +577,84 @@ describe("editing dimensions", () => {
       expect(updated.fixtures).toEqual(p.fixtures);
       expect(detectRooms(updated.walls)).toHaveLength(4);
     }
+  });
+});
+
+describe("group selections", () => {
+  test("marquee intersects real wall and rotated fixture shapes rather than their bounding boxes", () => {
+    const p = blankPlan();
+    p.walls = [wall("diagonal", { x: 0, y: 0 }, { x: 100, y: 100 }, "interior")];
+    p.fixtures = [{ id: "rotated", catalogId: "queen-bed", x: 80, y: 80, width: 100, depth: 4, rotation: 45 }];
+    expect(selectInBox(p, { x: 0, y: 90 }, { x: 10, y: 100 }, DEFAULT_LAYERS)).toEqual([]);
+    expect(selectInBox(p, { x: 100, y: 40 }, { x: 110, y: 50 }, DEFAULT_LAYERS)).toEqual([]);
+    const hits = selectInBox(p, { x: 70, y: 70 }, { x: 90, y: 90 }, DEFAULT_LAYERS);
+    expect(hits).toHaveLength(2);
+    expect(selectInBox(p, { x: 90, y: 90 }, { x: 70, y: 70 }, DEFAULT_LAYERS)).toEqual(hits);
+  });
+  test("marquee skips hidden items and rooms and can select an opening without its host wall", () => {
+    const p = rectangle();
+    p.openings = [{ id: "door", wallId: "w0", kind: "door", width: 36, t: .5, flip: false }];
+    p.fixtures = [{ id: "bed", catalogId: "queen-bed", x: 60, y: 60, width: 60, depth: 80, rotation: 0 }];
+    p.notes = [{ id: "note", x: 30, y: 40, width: 72, fontSize: 8, text: "Note", border: true }];
+    p.utilities = [{ id: "run", kind: "cold", a: { x: 30, y: 30 }, b: { x: 80, y: 30 } }];
+    expect(selectInBox(p, { x: 116, y: -1 }, { x: 124, y: 1 }, DEFAULT_LAYERS)).toEqual([{ type: "opening", id: "door" }]);
+    const hidden = { ...DEFAULT_LAYERS, notes: false, fixtures: false, utilities: false };
+    expect(selectInBox(p, { x: 20, y: 20 }, { x: 95, y: 110 }, hidden)).toEqual([]);
+    expect(visibleSelections(p, DEFAULT_LAYERS)).toHaveLength(8);
+    expect(visibleSelections(p, hidden)).toHaveLength(5);
+    expect(selectionBounds(p, [{ type: "fixture", id: "bed" }, { type: "text", id: "note" }])?.width).toBeGreaterThan(60);
+  });
+  test("mixed group moves translate each shared corner once and carry hosted openings", () => {
+    const p = rectangle();
+    p.walls.push(wall("branch", { x: 120, y: 0 }, { x: 120, y: 90 }, "interior"));
+    p.openings = [{ id: "door", wallId: "w0", kind: "door", width: 36, t: .25, flip: true, hinge: "right" }];
+    p.fixtures = [{ id: "bed", catalogId: "queen-bed", x: 60, y: 60, width: 60, depth: 80, rotation: 30 }];
+    p.notes = [{ id: "note", x: 30, y: 40, width: 72, fontSize: 8, text: "Note", border: true }];
+    p.utilities = [{ id: "run", kind: "cold", a: { x: 30, y: 30 }, b: { x: 80, y: 30 } }];
+    const before = JSON.stringify(p);
+    const moved = moveSelection(p, [{ type: "wall", id: "w0" }, { type: "wall", id: "w1" }, { type: "opening", id: "door" }, { type: "fixture", id: "bed" }, { type: "text", id: "note" }, { type: "utility", id: "run" }], { x: 12, y: 6 });
+    expect(moved.walls[0].a).toEqual({ x: 12, y: 6 });
+    expect(moved.walls[0].b).toEqual({ x: 252, y: 6 });
+    expect(moved.walls[1].a).toEqual(moved.walls[0].b);
+    expect(moved.walls[1].b).toEqual({ x: 252, y: 186 });
+    expect(moved.walls[2].a).toEqual(moved.walls[1].b);
+    expect(moved.walls[3].b).toEqual(moved.walls[0].a);
+    expect(moved.walls[4].a).toEqual({ x: 132, y: 6 });
+    expect(moved.walls[4].b).toEqual({ x: 120, y: 90 });
+    expect(moved.openings).toEqual(p.openings);
+    expect(moved.fixtures[0]).toMatchObject({ x: 72, y: 66, rotation: 30 });
+    expect(moved.notes[0]).toMatchObject({ x: 42, y: 46, text: "Note" });
+    expect(moved.utilities[0]).toMatchObject({ a: { x: 42, y: 36 }, b: { x: 92, y: 36 } });
+    expect(detectRooms(moved.walls)).toHaveLength(1);
+    expect(JSON.stringify(p)).toBe(before);
+  });
+  test("two selected openings slide together and a hosted opening never moves twice", () => {
+    const p = rectangle();
+    p.openings = [{ id: "a", wallId: "w0", kind: "door", width: 30, t: 1 / 3, flip: false }, { id: "b", wallId: "w0", kind: "window", width: 30, t: 2 / 3, flip: false }];
+    const moved = moveSelection(p, [{ type: "opening", id: "a" }, { type: "opening", id: "b" }], { x: 12, y: 6 });
+    expect(moved.openings[0].t * 240).toBeCloseTo(92, 5);
+    expect(moved.openings[1].t * 240).toBeCloseTo(172, 5);
+    expect(moved.walls).toEqual(p.walls);
+    const hosted = moveSelection(p, [{ type: "wall", id: "w0" }, { type: "opening", id: "a" }], { x: 12, y: 6 });
+    expect(hosted.openings).toEqual(p.openings);
+  });
+  test("invalid group moves preserve the source instead of dropping openings or collapsing walls", () => {
+    const p = rectangle(); p.openings = [{ id: "door", wallId: "w0", kind: "door", width: 36, t: .5, flip: false }];
+    const before = JSON.stringify(p);
+    expect(() => moveSelection(p, [{ type: "wall", id: "w0" }, { type: "opening", id: "door" }], { x: 0, y: 180 })).toThrow("collapse");
+    expect(() => moveSelection(p, [{ type: "wall", id: "w1" }], { x: -220, y: 0 })).toThrow("opening");
+    expect(() => moveSelection(p, [{ type: "opening", id: "door" }], { x: 240, y: 0 })).toThrow("opening");
+    expect(JSON.stringify(p)).toBe(before);
+  });
+  test("bulk delete removes only selected elements and openings hosted by deleted walls", () => {
+    const p = rectangle(); p.openings = [{ id: "door", wallId: "w0", kind: "door", width: 36, t: .5, flip: false }];
+    p.fixtures = [{ id: "bed", catalogId: "queen-bed", x: 60, y: 60, width: 60, depth: 80, rotation: 0 }];
+    p.notes = [{ id: "note", x: 30, y: 40, width: 72, fontSize: 8, text: "Note", border: true }];
+    const deleted = deleteSelection(p, [{ type: "wall", id: "w0" }, { type: "fixture", id: "bed" }]);
+    expect(deleted.walls).toHaveLength(3); expect(deleted.openings).toEqual([]); expect(deleted.fixtures).toEqual([]); expect(deleted.notes).toEqual(p.notes);
+    expect(parsePlan(deleted)).toEqual(deleted);
+    const all = deleteSelection(p, visibleSelections(p, DEFAULT_LAYERS));
+    expect(all.walls).toEqual([]); expect(all.openings).toEqual([]); expect(all.notes).toEqual([]);
   });
 });
 

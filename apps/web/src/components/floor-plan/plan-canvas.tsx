@@ -4,18 +4,20 @@ import { Maximize, Minus, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
 import { automaticDimensions, type Dimension } from "@/lib/floor-plan/dimensions";
-import { dimensionEnds, type FixedDimensionEnd } from "@/lib/floor-plan/edit-dimension";
+import { dimensionEnds, dimensionOpening, type FixedDimensionEnd } from "@/lib/floor-plan/edit-dimension";
 import { distance, fitOpening, fixtureCorners, lerp, moveWallPoint, normalizeOpenings, planBounds, polygonString, project, samePoint, snapPoint } from "@/lib/floor-plan/geometry";
 import { formatLength, id, type Layers, type Plan, type Point, type Selection, type Tool, type Utility, type Wall } from "@/lib/floor-plan/model";
+import { mergeSelections, moveSelection, selectInBox, selectionBounds, selectionKey } from "@/lib/floor-plan/selection";
 import { FixtureSymbol } from "./fixture-symbol";
 import { DimensionInlineEditor } from "./dimension-inline-editor";
 import { PlanArtwork, UTILITY_COLORS } from "./plan-artwork";
 
 type View = { x: number; y: number; zoom: number };
-type Drag = { pointerId: number; start: Point; screen: Point; snapshot: Plan; selection: Selection; end?: "a" | "b"; moved: boolean };
+type Drag = { pointerId: number; start: Point; screen: Point; snapshot: Plan; selection: Selection; selections: Selection[]; end?: "a" | "b"; moved: boolean; error?: string };
+type Marquee = { pointerId: number; start: Point; screen: Point; before: Selection[]; base: Selection[]; room?: Selection; moved: boolean };
 export type DrawSettings = { grid: number; snap: boolean; orthogonal: boolean; exteriorThickness: number; interiorThickness: number; doorWidth: number; windowWidth: number; length: number };
 export const TOOL_HINTS: Record<Tool, string> = {
-  select: "Click a dimension to resize · Select or drag walls, objects, and notes",
+  select: "Drag empty space to select · Shift-click adds / removes · Drag selection to move · Del to delete",
   pan: "Drag to move around the drawing · Scroll to zoom",
   exterior: "Click corners or drag a wall · Esc ends the chain · Shift allows angles",
   interior: "Click corners or drag a wall · Snap to exterior walls to create rooms",
@@ -31,9 +33,9 @@ export const TOOL_HINTS: Record<Tool, string> = {
 };
 const isEditable = (target: EventTarget | null) => target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable);
 
-export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId, placementRotation, commit, select, error, onZoom, onTextPlaced, onDimensionApply, dimensionEditingAllowed }: {
-  plan: Plan; tool: Tool; settings: DrawSettings; layers: Layers; selection: Selection | null; catalogId: string; placementRotation: number;
-  commit: (plan: Plan) => void; select: (s: Selection | null) => void; error: (message: string) => void; onZoom: (zoom: number) => void; onTextPlaced: () => void; onDimensionApply: (id: string, inches: number, fixedEnd: FixedDimensionEnd) => void; dimensionEditingAllowed: boolean;
+export function PlanCanvas({ plan, tool, settings, layers, selection, selections, selectMany, catalogId, placementRotation, commit, select, error, onZoom, onTextPlaced, onDimensionApply, dimensionEditingAllowed }: {
+  plan: Plan; tool: Tool; settings: DrawSettings; layers: Layers; selection: Selection | null; selections: Selection[]; catalogId: string; placementRotation: number;
+  commit: (plan: Plan) => void; select: (s: Selection | null) => void; selectMany: (s: Selection[]) => void; error: (message: string) => void; onZoom: (zoom: number) => void; onTextPlaced: () => void; onDimensionApply: (id: string, inches: number, fixedEnd: FixedDimensionEnd) => void; dimensionEditingAllowed: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -46,12 +48,15 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
   useEffect(() => { setEditingDimension(null); }, [plan.walls, plan.openings, tool, layers.dimensions, dimensionEditingAllowed]);
   const startDimensionEdit = (id: string) => {
     const dim = automaticDimensions(plan).find(d => d.id === id);
-    if (dim) { select(null); setFixedEnd("start"); setEditingDimension(dim); }
+    if (dim && !dimensionOpening(plan, dim)) { select(null); setFixedEnd("start"); setEditingDimension(dim); }
   };
   const drag = useRef<Drag | null>(null), pan = useRef<{ screen: Point; view: View; pointerId: number } | null>(null);
+  const marquee = useRef<Marquee | null>(null), selectManyRef = useRef(selectMany); selectManyRef.current = selectMany;
+  const [selectionBox, setSelectionBox] = useState<{ a: Point; b: Point } | null>(null);
   const drawPress = useRef<{ point: Point; screen: Point; pointerId: number } | null>(null);
   const fitted = useRef(false);
   const displayPlan = preview ?? plan;
+  const groupBox = useMemo(() => selections.length > 1 ? selectionBounds(displayPlan, selections) : null, [displayPlan, selections]);
   const fit = useCallback(() => {
     const box = planBounds(plan), margin = 120;
     const zoom = Math.min(3, Math.max(0.1, Math.min(size.width / (box.width + margin * 2), size.height / (box.height + margin * 2))));
@@ -66,15 +71,16 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
   }, []);
   useEffect(() => { if (!fitted.current && size.width > 100 && size.height > 100) { fit(); fitted.current = true; } }, [fit, size]);
   useEffect(() => { onZoom(view.zoom); }, [view.zoom, onZoom]);
-  useEffect(() => { setOrigin(null); setHover(null); setPreview(null); drawPress.current = null; }, [tool]);
+  useEffect(() => { setOrigin(null); setHover(null); setPreview(null); setSelectionBox(null); drawPress.current = null; drag.current = null; marquee.current = null; }, [tool]);
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && marquee.current) { marquee.current = null; setSelectionBox(null); selectManyRef.current([]); return; }
       if (isEditable(e.target)) return;
       if (e.code === "Space") { e.preventDefault(); setSpacePan(true); }
-      if (e.key === "Escape") { setOrigin(null); setPreview(null); drag.current = null; drawPress.current = null; }
+      if (e.key === "Escape") { setOrigin(null); setPreview(null); setSelectionBox(null); marquee.current = null; drag.current = null; drawPress.current = null; }
     };
     const up = (e: KeyboardEvent) => { if (e.code === "Space") setSpacePan(false); };
-    const blur = () => { setSpacePan(false); drag.current = null; pan.current = null; drawPress.current = null; setPreview(null); };
+    const blur = () => { setSpacePan(false); if (marquee.current) selectManyRef.current(marquee.current.before); marquee.current = null; setSelectionBox(null); drag.current = null; pan.current = null; drawPress.current = null; setPreview(null); };
     window.addEventListener("keydown", down); window.addEventListener("keyup", up); window.addEventListener("blur", blur);
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
   }, []);
@@ -120,14 +126,16 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
       const walls: Wall[] = corners.map((a, i) => ({ id: id(), a, b: corners[(i + 1) % 4], kind: "exterior", thickness: settings.exteriorThickness }));
       const overlaps = walls.some(w => plan.walls.some(old => (samePoint(w.a, old.a) && samePoint(w.b, old.b)) || (samePoint(w.a, old.b) && samePoint(w.b, old.a))));
       if (overlaps) { error("These walls already exist. Draw interior walls to divide a room."); return; }
-      commit({ ...plan, walls: [...plan.walls, ...walls] }); setOrigin(null); return;
+      const nextWalls = [...plan.walls, ...walls];
+      commit({ ...plan, walls: nextWalls, openings: normalizeOpenings(nextWalls, plan.openings) }); setOrigin(null); return;
     }
     if (tool === "exterior" || tool === "interior") {
       if (plan.walls.length >= 500) { error("This plan has reached the 500-wall limit."); return; }
       const duplicate = plan.walls.some(w => project(from, w.a, w.b).distance < 0.01 && project(to, w.a, w.b).distance < 0.01);
       if (duplicate) { error("A wall already exists along this segment."); setOrigin(to); return; }
       const wall: Wall = { id: id(), a: from, b: to, kind: tool, thickness: tool === "exterior" ? settings.exteriorThickness : settings.interiorThickness };
-      commit({ ...plan, walls: [...plan.walls, wall] }); setOrigin(to); return;
+      const walls = [...plan.walls, wall];
+      commit({ ...plan, walls, openings: normalizeOpenings(walls, plan.openings) }); setOrigin(to); return;
     }
     if (["electrical", "cold", "hot", "drain"].includes(tool)) {
       if (plan.utilities.length >= 500) { error("This plan has reached the 500-run limit."); return; }
@@ -141,14 +149,19 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
       e.preventDefault(); pan.current = { screen, view, pointerId: e.pointerId }; e.currentTarget.setPointerCapture(e.pointerId); return;
     }
     if (tool === "select") {
+      e.preventDefault(); e.currentTarget.focus({ preventScroll: true });
       const hit = (e.target as Element).closest<SVGElement>("[data-kind][data-id]");
-      if (!hit) { select(null); return; }
-      const s: Selection = { type: hit.dataset.kind as Selection["type"], id: hit.dataset.id! };
-      select(s);
-      if (s.type !== "room") {
-        drag.current = { start: world, screen, snapshot: plan, selection: s, end: hit.dataset.end as "a" | "b" | undefined, pointerId: e.pointerId, moved: false };
-        e.currentTarget.setPointerCapture(e.pointerId);
+      const s: Selection | undefined = hit ? { type: hit.dataset.kind as Selection["type"], id: hit.dataset.id! } : undefined;
+      if (!s || s.type === "room") {
+        marquee.current = { pointerId: e.pointerId, start: world, screen, before: selections, base: e.shiftKey ? selections : [], room: s, moved: false };
+        e.currentTarget.setPointerCapture(e.pointerId); return;
       }
+      const existing = selections.some(item => selectionKey(item) === selectionKey(s));
+      if (e.shiftKey) { selectMany(existing ? selections.filter(item => selectionKey(item) !== selectionKey(s)) : mergeSelections(selections, [s])); return; }
+      const next = existing && selections.length > 1 ? selections : [s];
+      selectMany(next);
+      drag.current = { start: world, screen, snapshot: plan, selection: s, selections: next, end: next.length === 1 ? hit?.dataset.end as "a" | "b" | undefined : undefined, pointerId: e.pointerId, moved: false };
+      e.currentTarget.setPointerCapture(e.pointerId);
       return;
     }
     if (tool === "text") {
@@ -165,8 +178,8 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
     if (tool === "door" || tool === "window") {
       const closest = plan.walls.map(w => ({ w, p: project(world, w.a, w.b) })).sort((a, b) => a.p.distance - b.p.distance)[0];
       if (!closest || closest.p.distance > 18 / view.zoom) { error("Click directly on a wall to place an opening."); return; }
-      const width = tool === "door" ? settings.doorWidth : settings.windowWidth, t = fitOpening(closest.w, width, closest.p.t, plan.openings);
-      if (t === null) { error("This opening does not fit here, or overlaps another opening."); return; }
+      const width = tool === "door" ? settings.doorWidth : settings.windowWidth, t = fitOpening(closest.w, width, closest.p.t, plan.openings, undefined, { kind: tool, walls: plan.walls });
+      if (t === null) { error("Doors and windows need 4″ of clearance from adjacent walls and must not overlap another opening."); return; }
       const opening = { id: id(), wallId: closest.w.id, kind: tool, width, t, flip: false, ...(tool === "door" ? { hinge: "left" as const } : {}) };
       commit({ ...plan, openings: [...plan.openings, opening] }); select({ type: "opening", id: opening.id }); return;
     }
@@ -179,6 +192,12 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
     if (pan.current) {
       const p = pan.current; setView({ ...p.view, x: p.view.x + screen.x - p.screen.x, y: p.view.y + screen.y - p.screen.y }); return;
     }
+    const m = marquee.current;
+    if (m) {
+      if (distance(screen, m.screen) < 3 && !m.moved) return;
+      m.moved = true; setSelectionBox({ a: m.start, b: world });
+      selectMany(mergeSelections(m.base, selectInBox(plan, m.start, world, layers))); return;
+    }
     const d = drag.current;
     if (d) {
       if (distance(screen, d.screen) < 3 && !d.moved) return;
@@ -187,7 +206,10 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
       const delta = { x: world.x - d.start.x, y: world.y - d.start.y };
       const quantize = (n: number) => settings.snap ? Math.round(n / settings.grid) * settings.grid : n;
       delta.x = quantize(delta.x); delta.y = quantize(delta.y);
-      if (d.selection.type === "fixture") {
+      if (d.selections.length > 1) {
+        try { setPreview(moveSelection(snapshot, d.selections, delta)); d.error = undefined; }
+        catch (e) { setPreview(null); d.error = e instanceof Error ? e.message : "The selection could not be moved."; }
+      } else if (d.selection.type === "fixture") {
         const f = snapshot.fixtures.find(f => f.id === d.selection.id)!;
         setPreview({ ...snapshot, fixtures: snapshot.fixtures.map(item => item.id === f.id ? { ...item, x: f.x + delta.x, y: f.y + delta.y } : item) });
       } else if (d.selection.type === "text") {
@@ -207,7 +229,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
         }
       } else if (d.selection.type === "opening") {
         const o = snapshot.openings.find(o => o.id === d.selection.id)!, w = snapshot.walls.find(w => w.id === o.wallId)!;
-        const t = fitOpening(w, o.width, project(world, w.a, w.b).t, snapshot.openings, o.id);
+        const t = fitOpening(w, o.width, project(world, w.a, w.b).t, snapshot.openings, o.id, { kind: o.kind, walls: snapshot.walls });
         if (t !== null) setPreview({ ...snapshot, openings: snapshot.openings.map(item => item.id === o.id ? { ...item, t } : item) });
       } else if (d.selection.type === "utility") {
         setPreview({ ...snapshot, utilities: snapshot.utilities.map(u => u.id === d.selection.id ? { ...u, a: { x: u.a.x + delta.x, y: u.a.y + delta.y }, b: { x: u.b.x + delta.x, y: u.b.y + delta.y } } : u) });
@@ -217,7 +239,18 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
     setHover(snapped(world, e.shiftKey, tool === "rectangle" || tool === "fixture" || tool === "text" ? null : origin));
   };
   const pointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (marquee.current?.moved || drag.current?.selections.length && drag.current.selections.length > 1) {
+      const canvas = e.currentTarget;
+      requestAnimationFrame(() => { if (canvas.isConnected) canvas.focus({ preventScroll: true }); });
+    }
+    if (drag.current?.error) error(drag.current.error);
     if (drag.current?.moved && preview) commit(preview);
+    const m = marquee.current;
+    if (m) {
+      if (m.moved) selectMany(mergeSelections(m.base, selectInBox(plan, m.start, location(e).world, layers)));
+      else if (!m.base.length) select(m.room ?? null);
+      marquee.current = null; setSelectionBox(null);
+    }
     if (drawPress.current) {
       const press = drawPress.current, { screen, world } = location(e);
       if (distance(screen, press.screen) > 6) finishSegment(press.point, snapped(world, e.shiftKey, tool === "rectangle" ? null : press.point));
@@ -249,13 +282,15 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
   }, [size.width, view]);
   return <div className="fp-canvas-wrap">
     <svg ref={svgRef} className="fp-canvas" aria-label="Floor plan drawing canvas" role="application" tabIndex={0} style={{ cursor, touchAction: "none" }}
-      onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { drag.current = null; pan.current = null; drawPress.current = null; setPreview(null); }} onPointerLeave={() => { if (!drag.current && !pan.current && !drawPress.current) setHover(null); }} onContextMenu={e => e.preventDefault()}>
+      onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { if (marquee.current) selectMany(marquee.current.before); marquee.current = null; setSelectionBox(null); drag.current = null; pan.current = null; drawPress.current = null; setPreview(null); }} onPointerLeave={() => { if (!drag.current && !pan.current && !drawPress.current && !marquee.current) setHover(null); }} onContextMenu={e => e.preventDefault()}>
       <defs><pattern id="draft-minor" width={minor} height={minor} patternUnits="userSpaceOnUse"><path d={`M${minor} 0H0V${minor}`} fill="none" stroke="#252732" strokeWidth={0.6 / view.zoom} /></pattern><pattern id="draft-major" width={major} height={major} patternUnits="userSpaceOnUse"><rect width={major} height={major} fill="url(#draft-minor)" /><path d={`M${major} 0H0V${major}`} fill="none" stroke="#343743" strokeWidth={0.6 / view.zoom} /></pattern></defs>
       <rect width="100%" height="100%" fill="#14151b" />
       <g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
         {layers.grid ? <rect x={-view.x / view.zoom} y={-view.y / view.zoom} width={size.width / view.zoom} height={size.height / view.zoom} fill="url(#draft-major)" /> : null}
         {!plan.walls.length && !plan.fixtures.length && !plan.notes.length ? <g pointerEvents="none" transform={`translate(${size.width / 2 / view.zoom - view.x / view.zoom} ${size.height / 2 / view.zoom - view.y / view.zoom})`} textAnchor="middle" fill="#a1a6bc"><text y={-24 / view.zoom} fontSize={23 / view.zoom} fontFamily="sans-serif">A home starts with a line.</text><text y={5 / view.zoom} fontSize={12 / view.zoom}>Choose Exterior wall or Rectangle to start drawing.</text><path d={`M${-12 / view.zoom},${35 / view.zoom}H${12 / view.zoom}M0,${23 / view.zoom}V${47 / view.zoom}`} stroke="#555c73" strokeWidth={1 / view.zoom} /></g> : null}
-        <PlanArtwork theme="dark" plan={displayPlan} layers={layers} selection={selection} scale={view.zoom} onDimensionEdit={tool === "select" && !spacePan && dimensionEditingAllowed ? startDimensionEdit : undefined} />
+        <PlanArtwork theme="dark" plan={displayPlan} layers={layers} selection={selection} selections={selections} scale={view.zoom} onDimensionEdit={tool === "select" && !spacePan && dimensionEditingAllowed ? startDimensionEdit : undefined} />
+        {groupBox && !selectionBox ? <rect data-group-selection="true" pointerEvents="none" x={groupBox.x - 6 / view.zoom} y={groupBox.y - 6 / view.zoom} width={groupBox.width + 12 / view.zoom} height={groupBox.height + 12 / view.zoom} stroke="#818cf8" strokeWidth={1 / view.zoom} strokeDasharray={`${5 / view.zoom} ${4 / view.zoom}`} fill="none" /> : null}
+        {selectionBox ? <rect data-selection-marquee="true" pointerEvents="none" x={Math.min(selectionBox.a.x, selectionBox.b.x)} y={Math.min(selectionBox.a.y, selectionBox.b.y)} width={Math.abs(selectionBox.b.x - selectionBox.a.x)} height={Math.abs(selectionBox.b.y - selectionBox.a.y)} fill="#818cf8" fillOpacity="0.1" stroke="#a5a7fa" strokeWidth={1 / view.zoom} strokeDasharray={`${4 / view.zoom} ${3 / view.zoom}`} /> : null}
         {dimensionLine ? <g pointerEvents="none" stroke="#a5a7fa" fill="#14151b" strokeWidth={1.5 / view.zoom} data-dimension-edit-guide="true"><path d={`M${dimensionLine.a.x},${dimensionLine.a.y}L${dimensionLine.b.x},${dimensionLine.b.y}`} /><circle cx={dimensionLine.moving.x} cy={dimensionLine.moving.y} r={4 / view.zoom} /></g> : null}
         {hover && tool !== "select" && tool !== "pan" ? <g pointerEvents="none" stroke="#818cf8" fill="none" strokeWidth={1 / view.zoom}>
           {tool === "text" ? <g transform={`translate(${hover.x} ${hover.y})`} opacity="0.7"><rect width="144" height="28" strokeDasharray="4 2" /><text x="8" y="16" fontFamily="monospace" fontSize="8" stroke="none" fill="#818cf8">Construction note</text></g> : null}
@@ -267,6 +302,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
       </g>
       <g pointerEvents="none"><rect width={size.width} height="22" fill="#18191f" /><path d={`M0 22H${size.width}`} stroke="#343743" />{horizontalRuler.map(x => <g key={x} transform={`translate(${view.x + x * view.zoom} 0)`}><path d="M0 16V22" stroke="#555c73" /><text x="4" y="12" fontSize="9" fontFamily="monospace" fill="#7d849c">{Math.round(x / 12)}′</text></g>)}</g>
     </svg>
+    {selections.length > 1 ? <output className="fp-selection-count" aria-label="Selected element count">{selections.length} selected · Drag to move · Del to delete</output> : null}
     {editingDimension && dimensionLine ? <DimensionInlineEditor key={editingDimension.id} dimension={editingDimension} fixed={fixedEnd} onFixedChange={setFixedEnd} size={size} anchor={{ x: view.x + dimensionLine.mid.x * view.zoom, y: view.y + dimensionLine.mid.y * view.zoom }} onCancel={cancelDimension} onApply={inches => { onDimensionApply(editingDimension.id, inches, fixedEnd); cancelDimension(true); }} /> : null}
     <div className="fp-canvas-label"><span className="fp-kicker">Drafting view</span><span>Level 1 <i /> inches / feet</span></div>
     <div className="fp-canvas-north" aria-label="North direction"><span>N</span><svg width="20" height="31" viewBox="0 0 20 31" aria-hidden="true"><path d="M10 0L17 20L10 16L3 20Z" fill="#939ab5" /><path d="M10 16V31" stroke="#939ab5" /></svg></div>
