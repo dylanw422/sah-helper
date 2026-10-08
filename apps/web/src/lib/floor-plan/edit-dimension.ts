@@ -1,6 +1,6 @@
 import { constrainWallAngles } from "./wall-constraints";
 import { automaticDimensions, type Dimension } from "./dimensions";
-import { detectRooms, distance, fitOpening, lerp, project, samePoint } from "./geometry";
+import { detectRooms, distance, fitOpening, lerp, project, samePoint, wallFaceGeometry } from "./geometry";
 import { parsePlan, type Opening, type Plan, type Point, type Wall } from "./model";
 
 export type FixedDimensionEnd = "start" | "end";
@@ -18,13 +18,15 @@ export function dimensionEnds(dim: Dimension) {
   return { start: reverse ? dim.b : dim.a, end: reverse ? dim.a : dim.b };
 }
 
-function jambAt(plan: Plan, p: Point, direction: Point) {
+function jambAt(plan: Plan, p: Point, direction: Point, suppliedBodies?: Wall[]) {
+  const bodies = suppliedBodies ?? (plan.openings.length ? wallFaceGeometry(plan.walls) : []);
   for (const opening of plan.openings) {
     const wall = plan.walls.find(w => w.id === opening.wallId)!;
+    const body = bodies.find(w => w.id === wall.id)!;
     const length = distance(wall.a, wall.b), along = unit(wall.a, wall.b);
     if (Math.abs(dot(along, direction)) < 0.9999) continue;
     for (const end of [-1, 1] as const) {
-      const point = lerp(wall.a, wall.b, opening.t + end * opening.width / (2 * length));
+      const point = lerp(body.a, body.b, opening.t + end * opening.width / (2 * length));
       const delta = subtract(p, point);
       if (Math.abs(dot(delta, direction)) < EPS && Math.abs(delta.x * direction.y - delta.y * direction.x) <= wall.thickness / 2 + EPS)
         return { opening, wall, end };
@@ -32,24 +34,31 @@ function jambAt(plan: Plan, p: Point, direction: Point) {
   }
 }
 
-export function dimensionOpening(plan: Plan, dim: Dimension) {
+export function dimensionOpening(plan: Plan, dim: Dimension, suppliedBodies?: Wall[]) {
   if (dim.openingId) return plan.openings.find(o => o.id === dim.openingId);
+  if (!plan.openings.length) return undefined;
   const { start, end } = dimensionEnds(dim), direction = unit(start, end);
-  const a = jambAt(plan, start, direction), b = jambAt(plan, end, direction);
+  const bodies = suppliedBodies ?? wallFaceGeometry(plan.walls);
+  const a = jambAt(plan, start, direction, bodies), b = jambAt(plan, end, direction, bodies);
   return a && a.opening.id === b?.opening.id ? a.opening : undefined;
 }
 
 function validateOpening(wall: Wall, opening: Opening, others: Opening[], walls: Wall[]) {
   const t = fitOpening(wall, opening.width, opening.t, others, opening.id, { kind: opening.kind, walls });
   if (t === null || Math.abs(t - opening.t) * distance(wall.a, wall.b) > EPS)
-    throw new Error("This size would move an opening beyond the wall, overlap another opening, or leave less than 4″ between a door or window and an adjacent wall. Choose a larger span or reposition the opening first.");
+    throw new Error(opening.kind === "opening" ? "This size would move an opening beyond its wall or overlap another opening. Choose a larger span or reposition the opening first." : "This size would move an opening beyond the wall, overlap another opening, or leave less than 4″ between a door or window and an adjacent wall. Choose a larger span or reposition the opening first.");
 }
 
 function boundaryAt(plan: Plan, dim: Dimension, p: Point, direction: Point) {
-  const room = dim.roomId ? detectRooms(plan.walls).find(r => r.id === dim.roomId) : undefined;
+  const rooms = detectRooms(plan.walls), room = dim.roomId ? rooms.find(r => r.id === dim.roomId) : undefined;
+  const bodies = new Map(wallFaceGeometry(plan.walls, rooms).map(w => [w.id, w]));
   return plan.walls.filter(w => {
-    if (room && !room.wallIds.includes(w.id)) return false;
-    const length = distance(w.a, w.b), along = unit(w.a, w.b), delta = subtract(p, w.a);
+    // Room boundaries omit dangling T partitions. Include their wall faces
+    // when locating the endpoint of a newly split interior dimension.
+    if (room && !room.wallIds.includes(w.id) && !plan.walls.some(host => room.wallIds.includes(host.id)
+      && [w.a, w.b].some(endpoint => project(endpoint, host.a, host.b).distance < EPS))) return false;
+    const body = bodies.get(w.id)!;
+    const length = distance(body.a, body.b), along = unit(body.a, body.b), delta = subtract(p, body.a);
     const parallel = Math.abs(dot(along, direction));
     const normalDistance = Math.abs(delta.x * along.y - delta.y * along.x);
     const position = dot(delta, along);
@@ -123,7 +132,8 @@ export function editDimension(plan: Plan, dimensionId: string, inches: number, f
   const dim = automaticDimensions(plan).find(d => d.id === dimensionId && !d.hideLabel);
   if (!dim) throw new Error("This dimension has changed. Select it again.");
   const { start, end } = dimensionEnds(dim), direction = unit(start, end);
-  const startJamb = jambAt(plan, start, direction), endJamb = jambAt(plan, end, direction);
+  const bodies = plan.openings.length ? wallFaceGeometry(plan.walls) : [];
+  const startJamb = jambAt(plan, start, direction, bodies), endJamb = jambAt(plan, end, direction, bodies);
   const widthId = dim.openingId ?? (startJamb?.opening.id === endJamb?.opening.id ? startJamb?.opening.id : undefined);
   if (widthId) {
     if (inches < 6 || inches > 240) throw new Error("Opening widths must be between 6 and 240 inches.");

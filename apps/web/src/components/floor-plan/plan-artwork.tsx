@@ -1,12 +1,13 @@
 import { memo, useMemo } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
 import { automaticDimensions, wallSegments, type Dimension } from "@/lib/floor-plan/dimensions";
-import { bounds, detectRooms, distance, fixtureCorners, lerp, pointInPolygon, polygonString, type Room } from "@/lib/floor-plan/geometry";
+import { dimensionLabel, layoutDimensions, labelsOverlap, type LabelBounds } from "@/lib/floor-plan/dimension-layout";
+import { bounds, detectRooms, distance, fixtureCorners, lerp, pointInPolygon, polygonString, wallFaceGeometry, type Room } from "@/lib/floor-plan/geometry";
 import { roofLayouts } from "@/lib/floor-plan/roof";
 import { noteLayout } from "@/lib/floor-plan/notes";
 import { selectionKey } from "@/lib/floor-plan/selection";
 import { dimensionOpening } from "@/lib/floor-plan/edit-dimension";
-import { formatLength, type Layers, type Plan, type Point, type Selection } from "@/lib/floor-plan/model";
+import type { Layers, Plan, Point, Selection } from "@/lib/floor-plan/model";
 import { FixtureSymbol } from "./fixture-symbol";
 
 function artworkPalette(dark: boolean, monochrome: boolean) {
@@ -15,14 +16,15 @@ function artworkPalette(dark: boolean, monochrome: boolean) {
 
 export const UTILITY_COLORS = { electrical: "#b2811c", cold: "#267bab", hot: "#b65044", drain: "#7d637f" };
 
-function labelPosition(room: Room, obstacles: ReturnType<typeof bounds>[], width: number, height: number): Point {
+function labelPosition(room: Room, obstacles: ReturnType<typeof bounds>[], dimensions: LabelBounds[], width: number, height: number): Point | null {
   const box = bounds(room.inner);
   const candidates = [room.center];
   for (let y = 1; y <= 7; y++) for (let x = 1; x <= 5; x++) candidates.push({ x: box.x + box.width * x / 6, y: box.y + box.height * y / 8 });
-  let best = room.center, score = Infinity;
+  let best: Point | null = null, score = Infinity;
   for (const p of candidates) {
     const corners = [{ x: p.x - width / 2, y: p.y - height / 2 }, { x: p.x + width / 2, y: p.y - height / 2 }, { x: p.x + width / 2, y: p.y + height / 2 }, { x: p.x - width / 2, y: p.y + height / 2 }];
     if (!corners.every(c => pointInPolygon(c, room.inner))) continue;
+    if (dimensions.some(dim => labelsOverlap({ x: p.x - width / 2, y: p.y - height / 2, width, height }, dim, 2))) continue;
     const overlap = obstacles.reduce((area, b) => area + Math.max(0, Math.min(p.x + width / 2, b.x + b.width + 3) - Math.max(p.x - width / 2, b.x - 3)) * Math.max(0, Math.min(p.y + height / 2, b.y + b.height + 3) - Math.max(p.y - height / 2, b.y - 3)), 0);
     const next = overlap * 100 + distance(p, room.center);
     if (next < score) { score = next; best = p; }
@@ -30,7 +32,7 @@ function labelPosition(room: Room, obstacles: ReturnType<typeof bounds>[], width
   return best;
 }
 
-function DimensionMark({ dim, fontSize, dark, monochrome, scale, onEdit }: { dim: Dimension; fontSize: number; dark: boolean; monochrome: boolean; scale: number; onEdit?: (id: string) => void }) {
+function DimensionMark({ dim, fontSize, label: suppliedLabel, labelPosition: suppliedPosition, dark, monochrome, scale, onEdit }: { dim: Dimension; fontSize: number; label?: string; labelPosition?: Point; dark: boolean; monochrome: boolean; scale: number; onEdit?: (id: string) => void }) {
   const paint = artworkPalette(dark, monochrome);
   const length = distance(dim.a, dim.b);
   if (length < 0.5) return null;
@@ -38,16 +40,16 @@ function DimensionMark({ dim, fontSize, dark, monochrome, scale, onEdit }: { dim
   const a = { x: dim.a.x + nx * dim.offset, y: dim.a.y + ny * dim.offset }, b = { x: dim.b.x + nx * dim.offset, y: dim.b.y + ny * dim.offset };
   let angle = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
   if (angle > 90 || angle < -90) angle += 180;
-  const mid = lerp(a, b, 0.5), label = formatLength(dim.value);
-  const labelFontSize = dim.doorway ? Math.min(fontSize, Math.max(1, length - 4) / (label.length * 0.62)) : fontSize;
+  const mid = suppliedPosition ?? lerp(a, b, 0.5), label = suppliedLabel ?? dimensionLabel(dim.value);
+  const labelFontSize = fontSize;
   const hitWidth = Math.max(label.length * labelFontSize * 0.7 + 8 / scale, 28 / scale), hitHeight = Math.max(labelFontSize * 1.8, 22 / scale);
   const hitTop = (dim.interior ? 0 : -4) - hitHeight / 2;
   const activate = (e: React.PointerEvent<SVGElement>) => { e.preventDefault(); e.stopPropagation(); onEdit?.(dim.id); };
-  return <g className="fp-dimension" fill="none" stroke={dim.overall ? paint("#c5c9dc", "#345955") : paint("#a1a6bc", "#6d827e")} strokeWidth="0.6" pointerEvents="none" data-dimension={dim.id} data-room-dimension={dim.roomId} data-opening-dimension={dim.openingId} data-doorway-dimension={dim.doorway ? dim.openingId : undefined}>
+  return <g className="fp-dimension" fill="none" stroke={dim.overall ? paint("#c5c9dc", "#345955") : paint("#a1a6bc", "#6d827e")} strokeWidth="0.6" pointerEvents="none" data-dimension={dim.id} data-room-dimension={dim.roomId} data-opening-dimension={dim.openingId} data-doorway-dimension={dim.doorway ? dim.openingId : undefined} data-dimension-label-adjusted={suppliedPosition ? "true" : undefined}>
     <path d={dim.doorway ? `M${a.x},${a.y}L${b.x},${b.y}` : `M${dim.a.x + nx * (dim.roomId ? 2 : 8)},${dim.a.y + ny * (dim.roomId ? 2 : 8)}L${a.x + nx * 4},${a.y + ny * 4}M${dim.b.x + nx * (dim.roomId ? 2 : 8)},${dim.b.y + ny * (dim.roomId ? 2 : 8)}L${b.x + nx * 4},${b.y + ny * 4}M${a.x},${a.y}L${b.x},${b.y}`} />
     {[a, b].map((p, i) => <path key={i} d={`M${p.x - 2},${p.y + 2}L${p.x + 2},${p.y - 2}`} strokeWidth="1.2" />)}
     {onEdit && !dim.hideLabel ? <path d={`M${a.x},${a.y}L${b.x},${b.y}`} stroke="transparent" strokeWidth={10 / scale} pointerEvents="stroke" style={{ cursor: "pointer" }} onPointerDown={activate} /> : null}
-    {!dim.hideLabel ? <g transform={`translate(${mid.x} ${mid.y}) rotate(${angle})`} textAnchor="middle" fontFamily="monospace" fill={paint("#c9ccda", "#34564e")} stroke={paint("#1c1e25", "#fafbf7", "#fff")} strokeWidth="3" paintOrder="stroke" pointerEvents={onEdit ? "all" : "none"} data-edit-dimension={onEdit ? dim.id : undefined} role={onEdit ? "button" : undefined} tabIndex={onEdit ? 0 : undefined} aria-label={onEdit ? `Edit dimension ${label}` : undefined} style={onEdit ? { cursor: "pointer" } : undefined} onPointerDown={onEdit ? activate : undefined} onKeyDown={onEdit ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onEdit(dim.id); } } : undefined}>
+    {!dim.hideLabel ? <g transform={`translate(${mid.x} ${mid.y}) rotate(${angle})`} textAnchor="middle" fontFamily="monospace" fill={paint("#c9ccda", "#34564e")} stroke={paint("#1c1e25", "#fafbf7", "#fff")} strokeWidth={Math.min(3, 3 / scale)} paintOrder="stroke" pointerEvents={onEdit ? "all" : "none"} data-edit-dimension={onEdit ? dim.id : undefined} role={onEdit ? "button" : undefined} tabIndex={onEdit ? 0 : undefined} aria-label={onEdit ? `Edit dimension ${label}` : undefined} style={onEdit ? { cursor: "pointer" } : undefined} onPointerDown={onEdit ? activate : undefined} onKeyDown={onEdit ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onEdit(dim.id); } } : undefined}>
       {onEdit ? <path d={`M${-hitWidth / 2} ${hitTop}h${hitWidth}v${hitHeight}h${-hitWidth}Z`} fill="transparent" stroke="none" /> : null}
       <text y={dim.interior ? 0 : -4} dominantBaseline={dim.interior ? "central" : undefined} fontSize={labelFontSize} fontWeight={dim.overall ? 600 : 400}>{label}</text>
     </g> : null}
@@ -66,16 +68,20 @@ export function PlanDefs({ prefix, dark = false, monochrome = false }: { prefix:
 }
 
 export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, selections, scale = 1, prefix = "plan", rooms: suppliedRooms, theme = "paper", onDimensionEdit }: {
-  plan: Plan; layers: Layers; selection?: Selection | null; selections?: Selection[]; scale?: number; prefix?: string; rooms?: Room[]; theme?: "paper" | "dark" | "monochrome"; onDimensionEdit?: (id: string) => void;
+  plan: Plan; layers: Layers; selection?: Selection | null; selections?: Selection[]; scale?: number; prefix?: string; rooms?: Room[]; theme?: "paper" | "dark" | "monochrome"; onDimensionEdit?: (dimension: Dimension) => void;
 }) {
   const dark = theme === "dark", monochrome = theme === "monochrome";
   const paint = artworkPalette(dark, monochrome);
   const detected = useMemo(() => suppliedRooms ?? detectRooms(plan.walls), [plan.walls, suppliedRooms]);
   const roofs = useMemo(() => layers.roof ? roofLayouts(plan) : [], [plan.walls, plan.roofOverhang, plan.roofType, layers.roof]);
   const dims = useMemo(() => layers.dimensions ? automaticDimensions({ walls: plan.walls, openings: plan.openings }, detected) : [], [plan.walls, plan.openings, detected, layers.dimensions]);
-  const wallInk = useMemo(() => plan.walls.map(wall => ({ wall, segments: wallSegments(wall, plan) })), [plan.walls, plan.openings]);
+  const dimensionLayout = useMemo(() => layoutDimensions(dims, scale), [dims, scale]);
+  const dimensionLabels = useMemo(() => dimensionLayout.flatMap(mark => mark.labelBounds ? [mark.labelBounds] : []), [dimensionLayout]);
+  const wallBodies = useMemo(() => wallFaceGeometry(plan.walls, detected), [plan.walls, detected]);
+  const wallInk = useMemo(() => wallBodies.map(wall => ({ wall, segments: wallSegments(wall, plan) })), [wallBodies, plan.openings]);
   const obstacles = useMemo(() => layers.fixtures ? plan.fixtures.filter(f => CATALOG_MAP.get(f.catalogId)?.category !== "Electrical").map(f => bounds(fixtureCorners(f))) : [], [plan.fixtures, layers.fixtures]);
-  const fontSize = Math.max(5, Math.min(10, 10 / scale));
+  const fontScale = Math.min(1, Math.max(scale, .01));
+  const fontSize = 10 / fontScale;
   const selectedKeys = useMemo(() => new Set((selections ?? (selection ? [selection] : [])).map(selectionKey)), [selection, selections]);
   const selected = (type: Selection["type"], id: string) => selectedKeys.has(`${type}:${id}`);
   return <>
@@ -105,13 +111,13 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
       {selection?.type === "wall" ? plan.walls.filter(w => w.id === selection.id).flatMap(w => [w.a, w.b].map((p, i) => <circle key={`${w.id}:${i}`} cx={p.x} cy={p.y} r={5 / scale} fill={paint("#22242c", "#fff", "#fff")} stroke={paint("#818cf8", "#0e8c7c")} strokeWidth={1.5 / scale} data-kind="wall" data-id={w.id} data-end={i ? "b" : "a"} />)) : null}
     </g>
     <g data-layer="openings">{plan.openings.map(o => {
-      const w = plan.walls.find(w => w.id === o.wallId);
+      const w = wallBodies.find(w => w.id === o.wallId);
       if (!w) return null;
       const center = lerp(w.a, w.b, o.t), angle = Math.atan2(w.b.y - w.a.y, w.b.x - w.a.x) * 180 / Math.PI;
       const color = selected("opening", o.id) ? paint("#818cf8", "#0e8c7c") : paint("#93a5c9", "#466e69");
       return <g key={o.id} transform={`translate(${center.x} ${center.y}) rotate(${angle})`} data-kind="opening" data-id={o.id} fill="none" stroke={color} strokeWidth="1">
         <rect x={-o.width / 2} y={-Math.max(w.thickness / 2, 5 / scale)} width={o.width} height={Math.max(w.thickness, 10 / scale)} fill="transparent" stroke="none" />
-        {o.kind === "window" ? <><rect x={-o.width / 2} y={-w.thickness / 2} width={o.width} height={w.thickness} fill={paint("#243245", "#edf8f6", "#fff")} /><path d={`M${-o.width / 2},0H${o.width / 2}`} /></> : <g data-door-hinge={o.hinge ?? "left"} transform={`translate(${o.hinge === "right" ? o.width / 2 : -o.width / 2} 0) scale(${o.hinge === "right" ? -1 : 1} ${o.flip ? -1 : 1})`}><path d={`M0 0V${o.width}A${o.width} ${o.width} 0 0 0 ${o.width} 0`} /><path data-door-leaf="" d={`M0 0V${o.width}`} strokeWidth="2" /></g>}
+        {o.kind === "window" ? <><rect x={-o.width / 2} y={-w.thickness / 2} width={o.width} height={w.thickness} fill={paint("#243245", "#edf8f6", "#fff")} /><path d={`M${-o.width / 2},0H${o.width / 2}`} /></> : o.kind === "door" ? <g data-door-hinge={o.hinge ?? "left"} transform={`translate(${o.hinge === "right" ? o.width / 2 : -o.width / 2} 0) scale(${o.hinge === "right" ? -1 : 1} ${o.flip ? -1 : 1})`}><path d={`M0 0V${o.width}A${o.width} ${o.width} 0 0 0 ${o.width} 0`} /><path data-door-leaf="" d={`M0 0V${o.width}`} strokeWidth="2" /></g> : null}
         {selected("opening", o.id) ? <rect x={-o.width / 2 - 3} y={-w.thickness / 2 - 3} width={o.width + 6} height={w.thickness + 6} strokeDasharray="3 2" /> : null}
       </g>;
     })}</g>
@@ -120,7 +126,7 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
       const color = monochrome ? "#000" : item?.category === "Electrical" ? paint("#d7b268", "#a47a27") : item?.category === "Plumbing" ? paint("#7cc4d4", "#357f89") : paint("#a1a7ba", "#60746a");
       return <g key={f.id} transform={`translate(${f.x} ${f.y}) rotate(${f.rotation})`} data-kind="fixture" data-id={f.id}>
         <title>{item?.name ?? f.catalogId}</title>
-        <g transform={`translate(${-f.width / 2} ${-f.depth / 2}) scale(${f.width / 100} ${f.depth / 100})`} fill="none" stroke={color} color={color} strokeWidth={Math.min(8, 130 / Math.min(f.width, f.depth))}><FixtureSymbol symbol={item?.symbol ?? "cabinet"} dark={dark} monochrome={monochrome} /></g>
+        <g transform={`translate(${-f.width / 2} ${-f.depth / 2}) scale(${f.width / 100} ${f.depth / 100})`} fill="none" stroke={color} color={color} opacity="0.5" strokeWidth={Math.min(8, 130 / Math.min(f.width, f.depth))}><FixtureSymbol symbol={item?.symbol ?? "cabinet"} steps={f.steps} dark={dark} monochrome={monochrome} /></g>
         <rect x={-f.width / 2} y={-f.depth / 2} width={f.width} height={f.depth} fill="transparent" stroke={selected("fixture", f.id) ? paint("#818cf8", "#0e8c7c") : "none"} strokeWidth={1.5 / scale} strokeDasharray={selected("fixture", f.id) ? `${4 / scale} ${2 / scale}` : undefined} />
       </g>;
     })}</g> : null}
@@ -131,20 +137,20 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
     </g>)}</g> : null}
     {layers.labels ? <g data-layer="labels" pointerEvents="none">{detected.map((room, i) => {
       const box = bounds(room.inner), info = plan.rooms[room.id];
-      const maxChars = Math.max(6, Math.floor((box.width - 10) / (fontSize * 0.68)));
+      const maxChars = Math.max(1, Math.floor((box.width - 10) / (fontSize * .7 * 1.13)));
       const name = info?.name ?? `ROOM ${i + 1}`, nameLabel = name.length > maxChars ? `${name.slice(0, maxChars - 1)}…` : name;
-      const horizontal = formatLength(box.width), vertical = formatLength(box.height), dimensionLabel = `${horizontal} × ${vertical}`;
-      const split = dimensionLabel.length * fontSize * 0.5 > box.width - 16;
-      const rows = [nameLabel, `${room.area.toFixed(0)} sq ft`, ...(layers.dimensions ? split ? [horizontal, vertical] : [dimensionLabel] : [])];
-      const labelWidth = Math.min(box.width - 4, Math.max(...rows.map(row => row.length)) * fontSize * 0.63);
-      const labelHeight = rows.length * fontSize * 1.45;
-      const center = labelPosition(room, obstacles, labelWidth, labelHeight);
-      return <g key={room.id} transform={`translate(${center.x} ${center.y})`} textAnchor="middle" fontFamily="monospace" fill={paint("#c9ccda", "#34564e")} stroke={paint("#1c1e25", "#fafbf7", "#fff")} strokeWidth="3" paintOrder="stroke">
+      const rowFontSize = (index: number) => fontSize * (index === 0 ? 1.13 : .9);
+      let rows = [nameLabel, `${room.area.toFixed(0)} sq ft`];
+      const position = () => labelPosition(room, obstacles, dimensionLabels, Math.max(...rows.map((row, index) => row.length * rowFontSize(index) * .62)) + 4, rows.length * fontSize * 1.45 + 4);
+      let center = position();
+      if (!center) { rows = rows.slice(0, 1); center = position(); }
+      if (!center) return null;
+      return <g key={room.id} data-room-label={room.id} transform={`translate(${center.x} ${center.y})`} textAnchor="middle" fontFamily="monospace" fill={paint("#c9ccda", "#34564e")} stroke={paint("#1c1e25", "#fafbf7", "#fff")} strokeWidth="3" paintOrder="stroke">
         <title>{name}</title>
-        {rows.map((row, index) => <text key={index} y={(index - (rows.length - 1) / 2) * fontSize * 1.45 + fontSize * 0.35} fontSize={fontSize * (index === 0 ? 1.13 : index === 1 ? 0.9 : 0.82)} fontWeight={index === 0 ? 600 : undefined}>{row}</text>)}
+        {rows.map((row, index) => <text key={index} y={(index - (rows.length - 1) / 2) * fontSize * 1.45 + fontSize * 0.35} fontSize={rowFontSize(index)} fontWeight={index === 0 ? 600 : undefined}>{row}</text>)}
       </g>;
     })}</g> : null}
-    {layers.dimensions ? <g data-layer="dimensions">{dims.map(dim => <DimensionMark key={dim.id} dim={dim} dark={dark} monochrome={monochrome} fontSize={fontSize * (dim.overall ? 1.3 : 1.1)} scale={scale} onEdit={onDimensionEdit && !dimensionOpening(plan, dim) ? onDimensionEdit : undefined} />)}</g> : null}
+    {layers.dimensions ? <g data-layer="dimensions">{dimensionLayout.map(({ dimension: dim, fontSize: labelFontSize, label, labelPosition }) => <DimensionMark key={dim.id} dim={dim} label={label} labelPosition={labelPosition} dark={dark} monochrome={monochrome} fontSize={labelFontSize} scale={scale} onEdit={onDimensionEdit && !dimensionOpening(plan, dim, wallBodies) ? () => onDimensionEdit(dim) : undefined} />)}</g> : null}
     {layers.notes ? <g data-layer="notes">{plan.notes.map(note => {
       const layout = noteLayout(note), active = selected("text", note.id);
       return <g key={note.id} data-kind="text" data-id={note.id} transform={`translate(${note.x} ${note.y})`}>

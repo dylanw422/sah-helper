@@ -1,5 +1,5 @@
 import { wallSegments } from "./dimensions";
-import { bounds, distance, fitOpening, fixtureCorners, lerp, pointInPolygon, project } from "./geometry";
+import { bounds, distance, fitOpening, fixtureCorners, lerp, pointInPolygon, project, wallFaceGeometry } from "./geometry";
 import { parsePlan, type Layers, type Plan, type Point, type Selection } from "./model";
 import { constrainWallAngles } from "./wall-constraints";
 import { noteCorners } from "./notes";
@@ -45,7 +45,8 @@ export function visibleSelections(plan: Plan, layers: Layers): Selection[] {
   ];
 }
 export function selectionBounds(plan: Plan, selections: Selection[]) {
-  const points = selections.flatMap(s => selectionPolygons(plan, s).flat());
+  const physicalPlan = { ...plan, walls: wallFaceGeometry(plan.walls) };
+  const points = selections.flatMap(s => selectionPolygons(physicalPlan, s).flat());
   return points.length ? bounds(points) : null;
 }
 
@@ -67,7 +68,8 @@ function intersectsBox(polygon: Point[], a: Point, b: Point) {
   });
 }
 export function selectInBox(plan: Plan, a: Point, b: Point, layers: Layers) {
-  return visibleSelections(plan, layers).filter(s => selectionPolygons(plan, s).some(poly => intersectsBox(poly, a, b)));
+  const physicalPlan = { ...plan, walls: wallFaceGeometry(plan.walls) };
+  return visibleSelections(plan, layers).filter(s => selectionPolygons(physicalPlan, s).some(poly => intersectsBox(poly, a, b)));
 }
 
 export function deleteSelection(plan: Plan, selections: Selection[]): Plan {
@@ -101,7 +103,7 @@ export function moveSelection(plan: Plan, selections: Selection[], delta: Point)
   for (const opening of openings) {
     if (!movedWalls.length && !has("opening", opening.id)) continue;
     const wall = walls.find(w => w.id === opening.wallId)!, t = fitOpening(wall, opening.width, opening.t, openings, opening.id, { kind: opening.kind, walls });
-    if (t === null || Math.abs(t - opening.t) * distance(wall.a, wall.b) > .01) throw new Error("This move would push an opening beyond its wall, overlap another opening, or leave less than 4″ between a door or window and an adjacent wall. Choose a different position.");
+    if (t === null || Math.abs(t - opening.t) * distance(wall.a, wall.b) > .01) throw new Error(opening.kind === "opening" ? "This move would push an opening beyond its wall or overlap another opening. Choose a different position." : "This move would push an opening beyond its wall, overlap another opening, or leave less than 4″ between a door or window and an adjacent wall. Choose a different position.");
   }
   return parsePlan({ ...plan, walls, openings,
     fixtures: plan.fixtures.map(f => has("fixture", f.id) ? { ...f, ...translate(f) } : f),

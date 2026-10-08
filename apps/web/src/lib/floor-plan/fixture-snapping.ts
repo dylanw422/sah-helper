@@ -1,5 +1,5 @@
 import { wallSegments } from "./dimensions";
-import { distance, fixtureCorners } from "./geometry";
+import { distance, fixtureCorners, wallFaceGeometry } from "./geometry";
 import type { Fixture, Plan, Point } from "./model";
 
 const dot = (a: Point, b: Point) => a.x * b.x + a.y * b.y;
@@ -11,7 +11,7 @@ export function snapFixtureToWalls(fixture: Fixture, plan: Pick<Plan, "walls" | 
   const angle = fixture.rotation * Math.PI / 180;
   const axes = [{ x: Math.cos(angle), y: Math.sin(angle) }, { x: -Math.sin(angle), y: Math.cos(angle) }];
   const support = (axis: Point) => Math.abs(dot(axis, axes[0])) * fixture.width / 2 + Math.abs(dot(axis, axes[1])) * fixture.depth / 2;
-  const bodies = plan.walls.flatMap(wall => wallSegments(wall, plan).map(segment => {
+  const bodies = wallFaceGeometry(plan.walls).flatMap(wall => wallSegments(wall, plan).map(segment => {
     const length = distance(segment.a, segment.b);
     const u = { x: (segment.b.x - segment.a.x) / length, y: (segment.b.y - segment.a.y) / length };
     return { a: segment.a, length, u, n: { x: -u.y, y: u.x }, half: wall.thickness / 2 };

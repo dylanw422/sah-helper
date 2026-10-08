@@ -4,6 +4,7 @@ import { Maximize, Minus, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
 import { automaticDimensions, type Dimension } from "@/lib/floor-plan/dimensions";
+import { layoutDimensions } from "@/lib/floor-plan/dimension-layout";
 import { dimensionEnds, dimensionOpening, type FixedDimensionEnd } from "@/lib/floor-plan/edit-dimension";
 import { distance, fitOpening, fixtureCorners, lerp, moveWallPoint, moveWalls, normalizeOpenings, planBounds, polygonString, project, samePoint, snapPoint } from "@/lib/floor-plan/geometry";
 import { formatLength, id, type Fixture, type Layers, type Plan, type Point, type Selection, type Tool, type Utility, type Wall } from "@/lib/floor-plan/model";
@@ -16,7 +17,7 @@ import { PlanArtwork, UTILITY_COLORS } from "./plan-artwork";
 type View = { x: number; y: number; zoom: number };
 type Drag = { pointerId: number; start: Point; screen: Point; snapshot: Plan; selection: Selection; selections: Selection[]; end?: "a" | "b"; moved: boolean; error?: string };
 type Marquee = { pointerId: number; start: Point; screen: Point; before: Selection[]; base: Selection[]; room?: Selection; moved: boolean };
-export type DrawSettings = { grid: number; snap: boolean; orthogonal: boolean; exteriorThickness: number; interiorThickness: number; doorWidth: number; windowWidth: number; length: number };
+export type DrawSettings = { grid: number; snap: boolean; orthogonal: boolean; exteriorThickness: number; interiorThickness: number; doorWidth: number; windowWidth: number; openingWidth: number; length: number };
 export const TOOL_HINTS: Record<Tool, string> = {
   select: "Drag empty space to select · Shift-click adds / removes · Drag selection to move · Del to delete",
   pan: "Drag to move around the drawing · Scroll to zoom",
@@ -25,6 +26,8 @@ export const TOOL_HINTS: Record<Tool, string> = {
   rectangle: "Click or drag two opposite corners to create exterior walls",
   door: "Click a wall to place a door · Openings attach to the wall",
   window: "Click a wall to place a window · Openings attach to the wall",
+  opening: "Click a wall to create an opening · Adjust its width in Properties",
+  stairs: "Click to place stairs · R rotates · Edit the number of steps in Properties",
   fixture: "Click to place · Object edges snap to wall faces · R rotates · Esc cancels",
   text: "Click to place a construction note · Edit its text in Properties",
   electrical: "Click points to draw circuit runs · Esc ends the run",
@@ -47,8 +50,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
   const [editingDimension, setEditingDimension] = useState<Dimension | null>(null), [fixedEnd, setFixedEnd] = useState<FixedDimensionEnd>("start");
   const cancelDimension = useCallback((restoreFocus = false) => { setEditingDimension(null); if (restoreFocus) svgRef.current?.focus(); }, []);
   useEffect(() => { setEditingDimension(null); }, [plan.walls, plan.openings, tool, layers.dimensions, dimensionEditingAllowed]);
-  const startDimensionEdit = (id: string) => {
-    const dim = automaticDimensions(plan).find(d => d.id === id);
+  const startDimensionEdit = (dim: Dimension) => {
     if (dim && !dimensionOpening(plan, dim)) { select(null); setFixedEnd("start"); setEditingDimension(dim); }
   };
   const drag = useRef<Drag | null>(null), pan = useRef<{ screen: Point; view: View; pointerId: number } | null>(null);
@@ -57,6 +59,8 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
   const drawPress = useRef<{ point: Point; screen: Point; pointerId: number } | null>(null);
   const fitted = useRef(false);
   const displayPlan = preview ?? plan;
+  const placingFixture = tool === "fixture" || tool === "stairs";
+  const placementCatalogId = tool === "stairs" ? "stairs" : catalogId;
   const groupBox = useMemo(() => selections.length > 1 ? selectionBounds(displayPlan, selections) : null, [displayPlan, selections]);
   const fit = useCallback(() => {
     const box = planBounds(plan), margin = 120;
@@ -175,17 +179,19 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
       const p = snapped(world, true, null), note = { id: id(), x: p.x, y: p.y, width: 144, fontSize: 8, text: "Construction note", border: true };
       commit({ ...plan, notes: [...plan.notes, note] }); select({ type: "text", id: note.id }); onTextPlaced(); return;
     }
-    if (tool === "fixture") {
-      const item = CATALOG_MAP.get(catalogId); if (!item) return;
+    if (placingFixture) {
+      const item = CATALOG_MAP.get(placementCatalogId); if (!item) return;
       if (plan.fixtures.length >= 1000) { error("This plan has reached the 1,000-object limit."); return; }
-      const fixture = positionFixture({ id: id(), catalogId, x: world.x, y: world.y, width: item.width, depth: item.depth, rotation: placementRotation });
+      const fixture = positionFixture({ id: id(), catalogId: placementCatalogId, x: world.x, y: world.y, width: item.width, depth: item.depth, rotation: placementRotation, ...(item.steps === undefined ? {} : { steps: item.steps }) });
       commit({ ...plan, fixtures: [...plan.fixtures, fixture] }); select({ type: "fixture", id: fixture.id }); return;
     }
-    if (tool === "door" || tool === "window") {
+    if (tool === "door" || tool === "window" || tool === "opening") {
       const closest = plan.walls.map(w => ({ w, p: project(world, w.a, w.b) })).sort((a, b) => a.p.distance - b.p.distance)[0];
       if (!closest || closest.p.distance > 18 / view.zoom) { error("Click directly on a wall to place an opening."); return; }
-      const width = tool === "door" ? settings.doorWidth : settings.windowWidth, t = fitOpening(closest.w, width, closest.p.t, plan.openings, undefined, { kind: tool, walls: plan.walls });
-      if (t === null) { error("Doors and windows need 4″ of clearance from adjacent walls and must not overlap another opening."); return; }
+      const width = tool === "door" ? settings.doorWidth : tool === "window" ? settings.windowWidth : Math.min(settings.openingWidth, distance(closest.w.a, closest.w.b));
+      if (width < 6) { error("Choose a wall at least 6″ long to create an opening."); return; }
+      const t = fitOpening(closest.w, width, closest.p.t, plan.openings, undefined, { kind: tool, walls: plan.walls });
+      if (t === null) { error(tool === "opening" ? "This opening overlaps another opening or extends beyond its wall. Choose another position or a smaller width." : "Doors and windows need 4″ of clearance from adjacent walls and must not overlap another opening."); return; }
       const opening = { id: id(), wallId: closest.w.id, kind: tool, width, t, flip: false, ...(tool === "door" ? { hinge: "left" as const } : {}) };
       commit({ ...plan, openings: [...plan.openings, opening] }); select({ type: "opening", id: opening.id }); return;
     }
@@ -238,8 +244,8 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
       }
       return;
     }
-    const item = tool === "fixture" ? CATALOG_MAP.get(catalogId) : undefined;
-    setHover(item ? positionFixture({ id: "preview", catalogId, x: world.x, y: world.y, width: item.width, depth: item.depth, rotation: placementRotation }) : snapped(world, e.shiftKey, tool === "rectangle" || tool === "text" ? null : origin));
+    const item = placingFixture ? CATALOG_MAP.get(placementCatalogId) : undefined;
+    setHover(item ? positionFixture({ id: "preview", catalogId: placementCatalogId, x: world.x, y: world.y, width: item.width, depth: item.depth, rotation: placementRotation }) : snapped(world, e.shiftKey, tool === "rectangle" || tool === "text" ? null : origin));
   };
   const pointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     if (marquee.current?.moved || drag.current?.selections.length && drag.current.selections.length > 1) {
@@ -261,7 +267,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
     drag.current = null; pan.current = null; drawPress.current = null; setPreview(null);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
-  const item = CATALOG_MAP.get(catalogId);
+  const item = CATALOG_MAP.get(placementCatalogId);
   const grid = settings.grid;
   const minor = grid * view.zoom >= 5 ? grid : grid * Math.ceil(5 / (grid * view.zoom));
   const major = Math.max(12, minor * Math.ceil(24 / minor));
@@ -269,11 +275,12 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
   const lineTool = ["exterior", "interior", "electrical", "cold", "hot", "drain"].includes(tool);
   const cursor = spacePan || tool === "pan" ? "grab" : tool === "select" ? "default" : "crosshair";
   const dimensionLine = editingDimension ? (() => {
-    const d = editingDimension, length = distance(d.a, d.b);
+    const mark = layoutDimensions(automaticDimensions(plan), view.zoom).find(mark => mark.dimension.id === editingDimension.id);
+    const d = mark?.dimension ?? editingDimension, length = distance(d.a, d.b);
     const offset = { x: -(d.b.y - d.a.y) / length * d.offset, y: (d.b.x - d.a.x) / length * d.offset };
     const a = { x: d.a.x + offset.x, y: d.a.y + offset.y }, b = { x: d.b.x + offset.x, y: d.b.y + offset.y };
     const ends = dimensionEnds({ ...d, a, b });
-    const mid = lerp(a, b, 0.5);
+    const mid = mark?.labelPosition ?? lerp(a, b, 0.5);
     return { a, b, moving: ends[fixedEnd === "start" ? "end" : "start"], mid };
   })() : null;
   const horizontalRuler = useMemo(() => {
@@ -299,7 +306,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
           {tool === "text" ? <g transform={`translate(${hover.x} ${hover.y})`} opacity="0.7"><rect width="144" height="28" strokeDasharray="4 2" /><text x="8" y="16" fontFamily="monospace" fontSize="8" stroke="none" fill="#818cf8">Construction note</text></g> : null}
           {origin && lineTool ? <><path d={`M${origin.x},${origin.y}L${hover.x},${hover.y}`} strokeWidth={tool === "exterior" ? settings.exteriorThickness : tool === "interior" ? settings.interiorThickness : 1.5 / view.zoom} stroke={lineTool && tool in UTILITY_COLORS ? UTILITY_COLORS[tool as Utility["kind"]] : "#818cf8"} strokeOpacity="0.6" /><g transform={`translate(${(origin.x + hover.x) / 2} ${(origin.y + hover.y) / 2 - 12 / view.zoom})`}><rect x={-50 / view.zoom} y={-14 / view.zoom} width={100 / view.zoom} height={21 / view.zoom} rx={4 / view.zoom} fill="#37395e" stroke="none" /><text textAnchor="middle" fontSize={11 / view.zoom} fill="white" stroke="none" fontFamily="monospace">{formatLength(distance(origin, hover))}</text></g></> : null}
           {origin && tool === "rectangle" ? <><polygon points={polygonString(rectangle)} fill="#818cf8" fillOpacity="0.07" strokeDasharray={`${6 / view.zoom} ${3 / view.zoom}`} strokeWidth={settings.exteriorThickness} /><text x={(origin.x + hover.x) / 2} y={(origin.y + hover.y) / 2} textAnchor="middle" fontSize={12 / view.zoom} fill="#818cf8" stroke="none">{formatLength(Math.abs(hover.x - origin.x))} × {formatLength(Math.abs(hover.y - origin.y))}</text></> : null}
-          {tool === "fixture" && item ? <g transform={`translate(${hover.x} ${hover.y}) rotate(${placementRotation})`} opacity="0.65"><polygon points={polygonString(fixtureCorners({ id: "preview", catalogId, x: 0, y: 0, width: item.width, depth: item.depth, rotation: 0 }))} strokeDasharray="3 2" /><g transform={`translate(${-item.width / 2} ${-item.depth / 2}) scale(${item.width / 100} ${item.depth / 100})`} color="#818cf8" strokeWidth="2"><FixtureSymbol symbol={item.symbol} dark /></g></g> : null}
+          {placingFixture && item ? <g data-fixture-preview="true" transform={`translate(${hover.x} ${hover.y}) rotate(${placementRotation})`}><polygon points={polygonString(fixtureCorners({ id: "preview", catalogId: placementCatalogId, x: 0, y: 0, width: item.width, depth: item.depth, rotation: 0 }))} strokeDasharray="3 2" /><g transform={`translate(${-item.width / 2} ${-item.depth / 2}) scale(${item.width / 100} ${item.depth / 100})`} color="#818cf8" opacity="0.5" strokeWidth="2"><FixtureSymbol symbol={item.symbol} steps={item.steps} dark /></g></g> : null}
           <circle cx={hover.x} cy={hover.y} r={4 / view.zoom} fill="#14151b" /><path d={`M${hover.x - 9 / view.zoom},${hover.y}H${hover.x + 9 / view.zoom}M${hover.x},${hover.y - 9 / view.zoom}V${hover.y + 9 / view.zoom}`} />
         </g> : null}
       </g>

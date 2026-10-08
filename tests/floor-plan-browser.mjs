@@ -48,8 +48,12 @@ try {
       if (!text) return true;
       const line = el.querySelector("path").getAttribute("d").match(/[ML][^ML]+/g).slice(-2).map(command => command.slice(1).split(",").map(Number));
       const center = text.parentElement.getAttribute("transform").match(/translate\(([^)]+)\)/)[1].split(" ").map(Number);
+      const dx = line[1][0] - line[0][0], dy = line[1][1] - line[0][1], lengthSquared = dx * dx + dy * dy;
+      const along = ((center[0] - line[0][0]) * dx + (center[1] - line[0][1]) * dy) / lengthSquared;
+      const aligned = el.dataset.dimensionLabelAdjusted ? along >= 0 && along <= 1 && Math.abs((center[0] - line[0][0]) * dy - (center[1] - line[0][1]) * dx) < 1e-8
+        : Math.abs(center[0] - (line[0][0] + line[1][0]) / 2) < 1e-8 && Math.abs(center[1] - (line[0][1] + line[1][1]) / 2) < 1e-8;
       return text.getAttribute("y") === "0" && text.getAttribute("dominant-baseline") === "central" && text.parentElement.getAttribute("text-anchor") === "middle"
-        && Math.abs(center[0] - (line[0][0] + line[1][0]) / 2) < 1e-8 && Math.abs(center[1] - (line[0][1] + line[1][1]) / 2) < 1e-8;
+        && aligned;
     });
   };
   const interiorArtwork = () => page.locator('[data-room-dimension]').evaluateAll(elements => elements.map(el => {
@@ -116,6 +120,25 @@ try {
   }, repo);
   for (const result of mergedWallPixels) await check(Promise.resolve(result.pixel.slice(0, 3).every(channel => channel === 221)), `${result.name} renders a continuous wall body without an internal border in print artwork`);
 
+  const mixedWallArtwork = await page.evaluate(async repo => {
+    const { planSvg } = await import(`/@fs/${repo}/apps/web/src/components/floor-plan/export.tsx`);
+    const { blankPlan, DEFAULT_LAYERS } = await import(`/@fs/${repo}/apps/web/src/lib/floor-plan/model.ts`);
+    const wall = (id, a, b, kind = "exterior", thickness = 6) => ({ id, a: { x: a[0], y: a[1] }, b: { x: b[0], y: b[1] }, kind, thickness });
+    const plan = { ...blankPlan(), walls: [wall("north", [0, 0], [96, 0]), wall("continuation", [96, 0], [240, 0], "interior", 4.5), wall("east", [240, 0], [240, 180]), wall("south", [240, 180], [0, 180]), wall("west", [0, 180], [0, 0])] };
+    const { svg } = planSvg(plan, { ...DEFAULT_LAYERS, roof: false });
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    const face = (id, outline) => {
+      const path = doc.querySelector(`[data-wall-${outline ? "outline" : "body"}="${id}"]`);
+      const y = Number(path.getAttribute("d").match(/^M[^,]+,([^L]+)/)[1]);
+      return y + Number(path.getAttribute("stroke-width")) / 2;
+    };
+    const inside = [...doc.querySelectorAll("[data-room-dimension]")];
+    const top = inside.filter(dim => dim.querySelector("[transform]").getAttribute("transform").startsWith("translate(120 17)"));
+    return { bodyFaces: [face("north", false), face("continuation", false)], outlineFaces: [face("north", true), face("continuation", true)], interiorCount: inside.length, topCount: top.length, topLabel: top[0]?.querySelector("text").textContent };
+  }, repo);
+  await check(Promise.resolve(mixedWallArtwork.bodyFaces.every(y => y === 2.5) && mixedWallArtwork.outlineFaces.every(y => y === 3.5)), "joined interior and exterior wall bodies and borders render perfectly flush on the room side");
+  await check(Promise.resolve(mixedWallArtwork.interiorCount === 4 && mixedWallArtwork.topCount === 1 && mixedWallArtwork.topLabel === "19′ 6″"), "exported mixed wall run has one continuous interior dimension across the type and thickness change");
+
   await check(Promise.resolve(await page.locator('[data-layer="rooms"] polygon').count() === 4), "four rooms generated automatically");
   await check(Promise.resolve(await page.getByRole("textbox", { name: "Plan name", exact: true }).count() === 1 && await page.locator(".fp-empty-properties, .fp-properties").count() === 0), "unselected right panel shows plan details without an empty properties section");
   const bulkContext = await browser.newContext({ viewport: { width: 1560, height: 1040 } });
@@ -129,6 +152,137 @@ try {
     { id: "bed", catalogId: "queen-bed", x: 240, y: 84, width: 60, depth: 80, rotation: 0 },
     { id: "toilet", catalogId: "toilet", x: 300, y: 156, width: 20, depth: 28, rotation: 0 },
   ], notes: [{ id: "note", x: 228, y: 174, width: 72, fontSize: 8, text: "Note", border: true }], utilities: [{ id: "run", kind: "cold", a: { x: 210, y: 54 }, b: { x: 294, y: 54 } }] };
+  const architectureContext = await browser.newContext({ viewport: { width: 1560, height: 1040 } });
+  const architecturePlan = { ...bulkPlan, id: "architecture-tools", name: "Architecture tools", fixtures: [], openings: [], notes: [], utilities: [] };
+  await architectureContext.addInitScript(({ key, plan }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 1, activeId: plan.id, plans: [plan] })); }, { key, plan: architecturePlan });
+  const architecturePage = await architectureContext.newPage();
+  architecturePage.on("pageerror", error => errors.push(error.message));
+  await architecturePage.goto("http://127.0.0.1:4179"); await architecturePage.getByRole("application").waitFor();
+  const architectureButton = name => architecturePage.getByRole("button", { name, exact: true });
+  const architectureSaved = async () => { await architecturePage.waitForTimeout(550); return architecturePage.evaluate(k => JSON.parse(localStorage.getItem(k)).plans[0], key); };
+  const architectureWorld = (x, y) => architecturePage.locator('[data-layer="walls"]').evaluate((el, p) => { const matrix = el.closest("svg").querySelector('g[transform^="translate("]').getScreenCTM(); return new DOMPoint(p.x, p.y).matrixTransform(matrix).toJSON(); }, { x, y });
+  const architectureClick = async (x, y) => { const p = await architectureWorld(x, y); await architecturePage.mouse.click(p.x, p.y); };
+  const architectureNumber = async (name, value) => { const input = architecturePage.getByRole("spinbutton", { name, exact: true }); await input.fill(String(value)); await input.press("Enter"); };
+  await check(Promise.resolve(await architecturePage.locator('.fp-tool-list button').filter({ hasText: "Stairs" }).count() === 1 && await architecturePage.locator('.fp-tool-list button').filter({ hasText: "Opening" }).count() === 1), "Architecture offers Stairs and plain Opening tools");
+  await architectureButton("Stairs").click(); await architectureClick(90, 120);
+  await check(Promise.resolve(await architecturePage.locator('[data-kind="fixture"] [data-stair-step]').count() === 12 && (await architectureSaved()).fixtures[0].steps === 12), "stairs place with twelve visible steps and an editable saved step count");
+  await architectureNumber("Number of steps", 18); await architectureNumber("Width", 48); await architectureNumber("Depth", 144);
+  await check(Promise.resolve(await architecturePage.locator('[data-kind="fixture"] [data-stair-step]').count() === 18 && (await architectureSaved()).fixtures[0].steps === 18), "changing the stairs step count redraws eighteen treads and preserves their editable footprint");
+  await architectureNumber("Number of steps", 2.5);
+  await check(Promise.resolve((await architectureSaved()).fixtures[0].steps === 18 && await architecturePage.getByRole("spinbutton", { name: "Number of steps", exact: true }).inputValue() === "18"), "fractional stair counts are rejected without altering the saved stairs");
+  await architectureButton("Select").click(); await architectureButton("Rotate").click(); await architectureButton("Copy").click();
+  await check(Promise.resolve((await architectureSaved()).fixtures.every(f => f.steps === 18 && f.rotation === 90)), "stairs rotate and copy while retaining their number of steps");
+  await architecturePage.getByRole("application").focus(); await architecturePage.keyboard.press("ControlOrMeta+z");
+  await check(Promise.resolve((await architectureSaved()).fixtures.length === 1), "copied stairs undo as one change");
+  await architectureButton("Opening").click(); await architectureClick(180, 120); await architectureNumber("Opening width", 60);
+  let architecture = await architectureSaved();
+  await check(Promise.resolve(architecture.openings[0].kind === "opening" && architecture.openings[0].width === 60 && await architecturePage.locator('[data-kind="opening"] path, [data-kind="opening"] [data-door-hinge]').count() === 0 && await architectureButton("Flip hinge side").count() === 0), "plain wall openings have an adjustable width and no window artwork or door swing controls");
+  const startGap = await architectureWorld(180, 120), endGap = await architectureWorld(180, 150);
+  await architectureButton("Select").click(); await architecturePage.mouse.move(startGap.x, startGap.y); await architecturePage.mouse.down(); await architecturePage.mouse.move(endGap.x, endGap.y, { steps: 10 }); await architecturePage.mouse.up();
+  architecture = await architectureSaved();
+  await check(Promise.resolve(architecture.openings[0].t === .625 && architecture.openings[0].width === 60), "plain openings drag along their host wall without changing width");
+  const exportedArchitecture = await architecturePage.evaluate(async ({ repo, plan }) => {
+    const { planSvg } = await import(`/@fs/${repo}/apps/web/src/components/floor-plan/export.tsx`);
+    const { DEFAULT_LAYERS } = await import(`/@fs/${repo}/apps/web/src/lib/floor-plan/model.ts`);
+    const doc = new DOMParser().parseFromString(planSvg(plan, { ...DEFAULT_LAYERS, roof: false }).svg, "image/svg+xml");
+    return { steps: doc.querySelectorAll('[data-stair-step]').length, gapMarks: doc.querySelectorAll('[data-kind="opening"] path').length, segments: [...doc.querySelectorAll('[data-wall-body="partition"]')].map(p => p.getAttribute("d")) };
+  }, { repo, plan: architecture });
+  await check(Promise.resolve(exportedArchitecture.steps === 18 && exportedArchitecture.gapMarks === 0 && isDeepStrictEqual(exportedArchitecture.segments, ["M180,0L180,120", "M180,180L180,240"])), "SVG export preserves stair treads and a plain sixty-inch wall break");
+  await architecturePage.reload(); await architecturePage.getByRole("application").waitFor();
+  await check(Promise.resolve((await architectureSaved()).fixtures[0].steps === 18 && (await architectureSaved()).openings[0].width === 60 && await architecturePage.locator('[data-stair-step]').count() === 18), "stairs and plain opening properties survive autosave and reload");
+  await architectureClick(180, 150); await architectureButton("Delete").click();
+  await check(Promise.resolve((await architectureSaved()).openings.length === 0 && await architecturePage.locator('[data-wall-body="partition"]').count() === 1), "deleting a plain opening closes its wall break");
+  await architectureContext.close();
+  const hallwayContext = await browser.newContext({ viewport: { width: 1560, height: 1040 } });
+  const hallwayPlan = { ...architecturePlan, id: "hallway-opening", name: "Hallway opening", walls: [
+    { id: "north", a: { x: 0, y: 0 }, b: { x: 24, y: 0 }, kind: "exterior", thickness: 6 },
+    { id: "east", a: { x: 24, y: 0 }, b: { x: 24, y: 120 }, kind: "exterior", thickness: 6 },
+    { id: "south", a: { x: 24, y: 120 }, b: { x: 0, y: 120 }, kind: "exterior", thickness: 6 },
+    { id: "west", a: { x: 0, y: 120 }, b: { x: 0, y: 0 }, kind: "exterior", thickness: 6 },
+    { id: "hallway", a: { x: 0, y: 60 }, b: { x: 24, y: 60 }, kind: "interior", thickness: 4.5 },
+  ] };
+  await hallwayContext.addInitScript(({ key, plan }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 1, activeId: plan.id, plans: [plan] })); }, { key, plan: hallwayPlan });
+  const hallwayPage = await hallwayContext.newPage();
+  hallwayPage.on("pageerror", error => errors.push(error.message));
+  await hallwayPage.goto("http://127.0.0.1:4179"); await hallwayPage.getByRole("application").waitFor();
+  await hallwayPage.getByRole("button", { name: "Opening", exact: true }).click();
+  const hallwayPoint = await hallwayPage.locator('[data-layer="walls"]').evaluate(el => new DOMPoint(12, 60).matrixTransform(el.closest("svg").querySelector('g[transform^="translate("]').getScreenCTM()).toJSON());
+  await hallwayPage.mouse.click(hallwayPoint.x, hallwayPoint.y);
+  const hallwaySaved = async () => { await hallwayPage.waitForTimeout(550); return hallwayPage.evaluate(k => JSON.parse(localStorage.getItem(k)).plans[0], key); };
+  await check(Promise.resolve((await hallwaySaved()).openings[0]?.width === 24 && await hallwayPage.locator('[data-wall-body="hallway"]').count() === 0 && await hallwayPage.locator('[data-wall-body="east"], [data-wall-body="west"]').count() === 2), "a plain opening fits a short hallway wall and removes its entire length without removing the adjoining walls");
+  const hallwayWidth = hallwayPage.getByRole("spinbutton", { name: "Opening width", exact: true });
+  await hallwayWidth.fill("18"); await hallwayWidth.press("Enter");
+  await check(Promise.resolve((await hallwaySaved()).openings[0].width === 18 && await hallwayPage.locator('[data-wall-body="hallway"]').count() === 2), "hallway openings resize with less than four inches of wall remaining at each end");
+  await hallwayWidth.fill("24"); await hallwayWidth.press("Enter");
+  await hallwayPage.reload(); await hallwayPage.getByRole("application").waitFor();
+  await check(Promise.resolve((await hallwaySaved()).openings[0].width === 24 && await hallwayPage.locator('[data-wall-body="hallway"]').count() === 0), "a full-width hallway opening survives autosave and reload");
+  await hallwayContext.close();
+  const compactContext = await browser.newContext({ viewport: { width: 1560, height: 1040 } });
+  const compactPlan = { ...architecturePlan, id: "compact-dimensions", name: "Compact room dimensions", walls: [
+    { id: "north", a: { x: 0, y: 0 }, b: { x: 54, y: 0 }, kind: "exterior", thickness: 6 },
+    { id: "east", a: { x: 54, y: 0 }, b: { x: 54, y: 42 }, kind: "exterior", thickness: 6 },
+    { id: "south", a: { x: 54, y: 42 }, b: { x: 0, y: 42 }, kind: "exterior", thickness: 6 },
+    { id: "west", a: { x: 0, y: 42 }, b: { x: 0, y: 0 }, kind: "exterior", thickness: 6 },
+    { id: "short", a: { x: 12, y: 12 }, b: { x: 17, y: 12 }, kind: "interior", thickness: 4.5 },
+  ] };
+  await compactContext.addInitScript(({ key, plan }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 1, activeId: plan.id, plans: [plan] })); }, { key, plan: compactPlan });
+  const compactPage = await compactContext.newPage();
+  compactPage.on("pageerror", error => errors.push(error.message));
+  await compactPage.goto("http://127.0.0.1:4179"); await compactPage.getByRole("application").waitFor();
+  const labelsReadable = () => {
+    const boxes = [...document.querySelectorAll('[data-layer="dimensions"] text, [data-room-label]')].map(el => el.getBoundingClientRect());
+    return boxes.every((a, i) => boxes.slice(i + 1).every(b => a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top));
+  };
+  for (let i = 0; i < 8; i++) await compactPage.getByRole("button", { name: "Zoom out", exact: true }).click();
+  const dimensionScreenSize = el => Number(el.getAttribute("font-size")) * Math.hypot(el.getScreenCTM().a, el.getScreenCTM().b);
+  const compactNorthText = compactPage.locator('[data-dimension="exterior:side:north:segment:0"] text');
+  const compactFontBeforeZoom = await compactNorthText.evaluate(dimensionScreenSize);
+  await check(compactPage.locator('[data-room-dimension] text').evaluateAll(elements => {
+    const angles = elements.map(el => Number(el.parentElement.getAttribute("transform").match(/rotate\(([^)]+)\)/)[1]));
+    return angles.length >= 2 && angles.some(angle => Math.abs(Math.sin((angle - angles[0]) * Math.PI / 180)) > .9);
+  }), "small rooms keep both a width and a depth dimension visible when zoomed out");
+  await check(Promise.resolve(await compactPage.locator('[data-dimension^="wall:short:"]').count() === 0 && await compactPage.evaluate(labelsReadable, undefined)), "small-room measurements omit spans under six inches and keep visible dimension and room labels from overlapping");
+  await check(compactPage.locator('[data-layer="dimensions"] text').evaluateAll(elements => elements.length > 0 && elements.every(el => Number(el.getAttribute("font-size")) * Math.hypot(el.getScreenCTM().a, el.getScreenCTM().b) >= (el.closest('[data-dimension-label-adjusted]') ? 7.9 : 10.9) - 4 / 3)), "dimensions keep their screen size with the one-point font reduction");
+  const compactFirst = compactPage.locator('[data-room-dimension] [data-edit-dimension]').first();
+  await compactFirst.focus(); await compactFirst.press("Enter");
+  await check(compactPage.locator(".fp-dimension-editor").evaluate(el => {
+    const label = document.querySelector('[data-room-dimension] [data-edit-dimension] text').getBoundingClientRect(), editor = el.getBoundingClientRect();
+    return Math.abs(editor.x + editor.width / 2 - label.x - label.width / 2) < 3 && Math.abs(editor.y + 17 - label.y - label.height / 2) < 3;
+  }), "the inline editor anchors to the compact label when its position moves along a dimension side");
+  await compactPage.getByRole("textbox", { name: "New dimension", exact: true }).press("Escape");
+  await compactPage.screenshot({ path: resolve(output, "compact-room-dimensions.png"), fullPage: true });
+  for (let i = 0; i < 16; i++) await compactPage.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await check(Promise.resolve(await compactPage.locator('[data-room-dimension] text').count() >= 2 && await compactPage.evaluate(labelsReadable, undefined)), "zooming in keeps both small-room dimensions readable without overlapping labels");
+  await check(Promise.resolve(await compactNorthText.evaluate(dimensionScreenSize) > compactFontBeforeZoom * 3 && await compactNorthText.evaluate(el => Number(el.getAttribute("font-size")) >= 11 - 4 / 3)), "zooming in enlarges dimension text while retaining a minimum drawing font size");
+  await compactPage.screenshot({ path: resolve(output, "zoomed-room-dimensions.png"), fullPage: true });
+  const compactEditable = compactPage.locator('[data-room-dimension] [data-edit-dimension]').first();
+  await compactEditable.focus(); await compactEditable.press("Enter");
+  await check(Promise.resolve(await compactPage.getByRole("textbox", { name: "New dimension", exact: true }).count() === 1), "small-room dimensions revealed by zooming remain editable");
+  await compactPage.getByRole("textbox", { name: "New dimension", exact: true }).press("Escape");
+  const compactExport = await compactPage.evaluate(async ({ repo, plan }) => {
+    const { planSvg } = await import(`/@fs/${repo}/apps/web/src/components/floor-plan/export.tsx`);
+    const { DEFAULT_LAYERS } = await import(`/@fs/${repo}/apps/web/src/lib/floor-plan/model.ts`);
+    const root = new DOMParser().parseFromString(planSvg(plan, { ...DEFAULT_LAYERS, roof: false }).svg, "image/svg+xml").documentElement;
+    root.style.cssText = "position:absolute;left:0;top:0;opacity:0;pointer-events:none";
+    document.body.append(root);
+    const boxes = [...root.querySelectorAll('[data-layer="dimensions"] text, [data-room-label]')].map(el => el.getBoundingClientRect());
+    const angles = [...root.querySelectorAll('[data-room-dimension] text')].map(el => Number(el.parentElement.getAttribute("transform").match(/rotate\(([^)]+)\)/)[1]));
+    const result = { short: root.querySelectorAll('[data-dimension^="wall:short:"]').length, readable: boxes.every((a, i) => boxes.slice(i + 1).every(b => a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)), twoSides: angles.length >= 2 && angles.some(angle => Math.abs(Math.sin((angle - angles[0]) * Math.PI / 180)) > .9) };
+    root.remove(); return result;
+  }, { repo, plan: compactPlan });
+  await check(Promise.resolve(compactExport.short === 0 && compactExport.readable && compactExport.twoSides), "small-room exports keep width and depth dimensions readable and omit sub-six-inch spans");
+  const narrowPlan = { ...compactPlan, name: "Narrow room dimensions", walls: compactPlan.walls.map(w => ({ ...w, a: { ...w.a, x: w.a.x * 2 / 3 }, b: { ...w.b, x: w.b.x * 2 / 3 } })) };
+  const narrowContext = await browser.newContext({ viewport: { width: 1560, height: 1040 } });
+  await narrowContext.addInitScript(({ key, plan }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 1, activeId: plan.id, plans: [plan] })); }, { key, plan: narrowPlan });
+  const narrowPage = await narrowContext.newPage();
+  narrowPage.on("pageerror", error => errors.push(error.message));
+  await narrowPage.goto("http://127.0.0.1:4179"); await narrowPage.getByRole("application").waitFor();
+  for (let i = 0; i < 8; i++) await narrowPage.getByRole("button", { name: "Zoom out", exact: true }).click();
+  await narrowPage.screenshot({ path: resolve(output, "narrow-room-dimensions.png"), fullPage: true });
+  const narrowLabels = await narrowPage.locator('[data-room-dimension] text').allTextContents();
+  await check(Promise.resolve(narrowLabels.length === 2 && narrowLabels.includes("30″") && narrowLabels.includes("3′") && await narrowPage.evaluate(labelsReadable)), `a narrower closet-sized room keeps thirty-inch width and three-foot depth labels without overlap: ${narrowLabels.join(", ")}`);
+  await narrowContext.close();
+  await compactContext.close();
   await bulkContext.addInitScript(({ key, plan }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 1, activeId: plan.id, plans: [plan] })); }, { key, plan: bulkPlan });
   const bulkPage = await bulkContext.newPage();
   bulkPage.on("pageerror", error => errors.push(error.message));
@@ -477,7 +631,7 @@ try {
   await check(Promise.resolve((await saved()).fixtures.some(f => f.catalogId === "toilet")), "place bathroom fixtures");
   await find("Place Roll-in shower").click();
   const showerPreviewPoint = await world(24, 24); await page.mouse.move(showerPreviewPoint.x, showerPreviewPoint.y);
-  await check(page.getByRole("application").locator('g[opacity="0.65"]').evaluate(el => el.getAttribute("transform") === "translate(27 27) rotate(0)"), "object placement preview snaps its edges to both inside wall faces");
+  await check(page.getByRole("application").locator('[data-fixture-preview]').evaluate(el => el.getAttribute("transform") === "translate(27 27) rotate(0)"), "object placement preview snaps its edges to both inside wall faces");
   await click(24, 24); await page.keyboard.press("Escape");
   let placedShower = (await saved()).fixtures.find(f => f.catalogId === "shower");
   await check(Promise.resolve(placedShower.x === 27 && placedShower.y === 27), "a shower can touch both corner walls without a grid gap or wall penetration");

@@ -1,8 +1,10 @@
 // All model coordinates and sizes are inches. Screen pixels never enter saved plans.
 export type Point = { x: number; y: number };
 export type Wall = { id: string; a: Point; b: Point; kind: "exterior" | "interior"; thickness: number };
-export type Opening = { id: string; wallId: string; kind: "door" | "window"; t: number; width: number; flip: boolean; hinge?: "left" | "right" };
-export type Fixture = { id: string; catalogId: string; x: number; y: number; width: number; depth: number; rotation: number };
+export type Opening = { id: string; wallId: string; kind: "door" | "window" | "opening"; t: number; width: number; flip: boolean; hinge?: "left" | "right" };
+export type Fixture = { id: string; catalogId: string; x: number; y: number; width: number; depth: number; rotation: number; steps?: number };
+export const DEFAULT_STAIR_STEPS = 12;
+export const MAX_STAIR_STEPS = 100;
 export type Utility = { id: string; kind: "electrical" | "cold" | "hot" | "drain"; a: Point; b: Point };
 export type TextNote = { id: string; x: number; y: number; width: number; fontSize: number; text: string; border: boolean };
 export type Finish = "none" | "wood" | "tile" | "carpet" | "vinyl" | "concrete";
@@ -14,7 +16,7 @@ export type Plan = {
   rooms: Record<string, RoomInfo>; roofOverhang: number; roofType: RoofType;
 };
 export type Selection = { type: "wall" | "opening" | "fixture" | "utility" | "room" | "text"; id: string };
-export type Tool = "select" | "pan" | "exterior" | "interior" | "rectangle" | "door" | "window" | "fixture" | "text" | Utility["kind"];
+export type Tool = "select" | "pan" | "exterior" | "interior" | "rectangle" | "door" | "window" | "opening" | "stairs" | "fixture" | "text" | Utility["kind"];
 export type Layers = { grid: boolean; dimensions: boolean; roof: boolean; fixtures: boolean; utilities: boolean; finishes: boolean; labels: boolean; notes: boolean };
 export const DEFAULT_LAYERS: Layers = { grid: true, dimensions: true, roof: true, fixtures: true, utilities: true, finishes: false, labels: true, notes: true };
 export const FINISHES: { id: Finish; name: string; color: string }[] = [
@@ -93,7 +95,7 @@ export function parsePlan(value: unknown): Plan {
   });
   const wallIds = new Set(walls.map(w => w.id));
   const openings = arr(p.openings, o => {
-    if ((o.kind !== "door" && o.kind !== "window") || !wallIds.has(String(o.wallId)) || typeof o.flip !== "boolean") fail();
+    if ((o.kind !== "door" && o.kind !== "window" && o.kind !== "opening") || !wallIds.has(String(o.wallId)) || typeof o.flip !== "boolean") fail();
     if (o.hinge !== undefined && o.hinge !== "left" && o.hinge !== "right") fail();
     return { id: str(o.id), wallId: str(o.wallId), kind: o.kind as Opening["kind"], t: num(o.t, 0, 1), width: num(o.width, 6, 240), flip: o.flip as boolean,
       ...(o.hinge === undefined ? {} : { hinge: o.hinge as Opening["hinge"] }) };
@@ -104,7 +106,11 @@ export function parsePlan(value: unknown): Plan {
     if (o.t * length - o.width / 2 < -0.01 || o.t * length + o.width / 2 > length + 0.01) fail();
     if (openings.slice(0, i).some(other => other.wallId === o.wallId && Math.abs(other.t - o.t) * length < (other.width + o.width) / 2 - 0.01)) fail();
   }
-  const fixtures = arr(p.fixtures, f => ({ id: str(f.id), catalogId: str(f.catalogId), x: num(f.x), y: num(f.y), width: num(f.width, 1, 600), depth: num(f.depth, 1, 600), rotation: num(f.rotation, -3600, 3600) }), 1000);
+  const fixtures = arr(p.fixtures, f => {
+    const steps = f.steps === undefined ? (f.catalogId === "stairs" ? DEFAULT_STAIR_STEPS : undefined) : f.steps;
+    if (steps !== undefined && (typeof steps !== "number" || !Number.isInteger(steps) || steps < 1 || steps > MAX_STAIR_STEPS)) fail();
+    return { id: str(f.id), catalogId: str(f.catalogId), x: num(f.x), y: num(f.y), width: num(f.width, 1, 600), depth: num(f.depth, 1, 600), rotation: num(f.rotation, -3600, 3600), ...(steps === undefined ? {} : { steps: steps as number }) };
+  }, 1000);
   const utilities = arr(p.utilities, u => {
     if (!["electrical", "cold", "hot", "drain"].includes(String(u.kind))) fail();
     return { id: str(u.id), kind: u.kind as Utility["kind"], a: point(u.a), b: point(u.b) };

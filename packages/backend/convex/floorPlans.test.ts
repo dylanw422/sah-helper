@@ -40,6 +40,16 @@ test("creating a client saves an editable plan atomically and is safe to retry",
   expect(await a.query(api.floorPlans.listClients, {})).toHaveLength(1);
 });
 
+test("client plans preserve stairs and plain wall openings with their editable properties", async () => {
+  const { a } = await setup();
+  const plan = { ...blankPlan("Architecture features"), walls: [{ id: "wall", a: { x: 0, y: 0 }, b: { x: 240, y: 0 }, thickness: 6, kind: "exterior" as const }], openings: [{ id: "gap", wallId: "wall", kind: "opening" as const, t: .5, width: 48, flip: false }], fixtures: [{ id: "stairs", catalogId: "stairs", x: 60, y: 90, width: 36, depth: 120, rotation: 0, steps: 16 }] };
+  const saved = await a.mutation(api.floorPlans.saveToNewClient, { client, document: JSON.stringify(plan), expectedRevision: 0, requestId: "architecture" });
+  const reopened = parsePlan(JSON.parse((await a.query(api.floorPlans.get, { id: saved.id })).document));
+  expect(reopened.fixtures[0].steps).toBe(16);
+  expect(reopened.openings[0]).toEqual(plan.openings[0]);
+  await expect(a.mutation(api.floorPlans.save, { clientId: saved.clientId, document: JSON.stringify({ ...plan, fixtures: [{ ...plan.fixtures[0], steps: 2.5 }] }), expectedRevision: 1 })).rejects.toThrow("valid floor-plan");
+});
+
 test("client plans preserve roof type, accept legacy backups, and reject invalid roof settings", async () => {
   const { a } = await setup();
   const plan = { ...blankPlan("Roof styles"), roofType: "hip" as const };

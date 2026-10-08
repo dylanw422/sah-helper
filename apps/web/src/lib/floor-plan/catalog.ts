@@ -1,6 +1,9 @@
-export type CatalogCategory = "Furniture" | "Bathroom" | "Kitchen" | "Electrical" | "Plumbing";
-export type CatalogItem = { id: string; name: string; category: CatalogCategory; width: number; depth: number; symbol: string };
+import { DEFAULT_STAIR_STEPS } from "./model";
+
+export type CatalogCategory = "Architecture" | "Furniture" | "Bathroom" | "Kitchen" | "Electrical" | "Plumbing";
+export type CatalogItem = { id: string; name: string; category: CatalogCategory; width: number; depth: number; symbol: string; steps?: number };
 export const CATALOG: CatalogItem[] = [
+  { id: "stairs", name: "Stairs", category: "Architecture", width: 36, depth: 120, symbol: "stairs", steps: DEFAULT_STAIR_STEPS },
   { id: "queen-bed", name: "Queen bed", category: "Furniture", width: 60, depth: 80, symbol: "bed" },
   { id: "king-bed", name: "King bed", category: "Furniture", width: 76, depth: 80, symbol: "bed" },
   { id: "twin-bed", name: "Twin bed", category: "Furniture", width: 38, depth: 75, symbol: "bed" },

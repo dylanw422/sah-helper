@@ -1,7 +1,23 @@
-import { bounds, detectRooms, distance, lerp, project, samePoint, type Room } from "./geometry";
+import { bounds, detectRooms, distance, lerp, project, samePoint, wallFaceGeometry, type Room } from "./geometry";
 import type { Plan, Point, Wall } from "./model";
 import { roomDimensions } from "./room-dimensions";
 export type Dimension = { id: string; a: Point; b: Point; offset: number; value: number; overall?: boolean; roomId?: string; openingId?: string; hideLabel?: boolean; interior?: boolean; doorway?: boolean };
+
+function exteriorOffset(wall: Wall, a: Point, b: Point, rooms: Room[]): number {
+  const midpoint = lerp(a, b, 0.5);
+  for (const room of rooms) {
+    if (!room.wallIds.includes(wall.id)) continue;
+    for (let i = 0; i < room.points.length; i++) {
+      const start = room.points[i], end = room.points[(i + 1) % room.points.length];
+      if (project(midpoint, start, end).distance >= 0.01) continue;
+      // Room boundaries run with the interior on their left. Reverse the
+      // offset when the wall was drawn against that boundary direction.
+      const alignment = (b.x - a.x) * (end.x - start.x) + (b.y - a.y) * (end.y - start.y);
+      return alignment > 0 ? -30 : 30;
+    }
+  }
+  return -30;
+}
 
 export function automaticDimensions(plan: Pick<Plan, "walls" | "openings">, suppliedRooms?: Room[]): Dimension[] {
   const dims: Dimension[] = [];
@@ -68,13 +84,14 @@ export function automaticDimensions(plan: Pick<Plan, "walls" | "openings">, supp
     const sorted = ticks.sort((a, b) => project(a, wall.a, wall.b).t - project(b, wall.a, wall.b).t).filter((p, i, arr) => !i || !samePoint(p, arr[i - 1]));
     for (let i = 0; i < sorted.length - 1; i++) {
       const a = sorted[i], b = sorted[i + 1];
-      dims.push({ id: `wall:${wall.id}:segment:${i}`, a, b, value: distance(a, b), offset: wall.kind === "interior" ? -16 : -30, interior: wall.kind === "interior" });
+      dims.push({ id: `wall:${wall.id}:segment:${i}`, a, b, value: distance(a, b), offset: wall.kind === "interior" ? -16 : exteriorOffset(wall, a, b, rooms), interior: wall.kind === "interior" });
     }
   }
   const dimensions = [...dims, ...roomDimensions(plan, rooms)];
+  const wallBodies = wallFaceGeometry(plan.walls, rooms);
   for (const opening of plan.openings) {
-    if (opening.kind !== "door") continue;
-    const wall = plan.walls.find(w => w.id === opening.wallId);
+    if (opening.kind === "window") continue;
+    const wall = wallBodies.find(w => w.id === opening.wallId);
     if (!wall) continue;
     const length = distance(wall.a, wall.b);
     if (length < 0.5) continue;

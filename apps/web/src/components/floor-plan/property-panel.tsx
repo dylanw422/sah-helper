@@ -4,7 +4,7 @@ import { Copy, FlipHorizontal, RotateCw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
 import { bounds, distance, fitOpening, moveWallPoint, normalizeOpenings, type Room } from "@/lib/floor-plan/geometry";
-import { FINISHES, formatLength, type Plan, type Selection, type TextNote } from "@/lib/floor-plan/model";
+import { DEFAULT_STAIR_STEPS, MAX_STAIR_STEPS, FINISHES, formatLength, type Plan, type Selection, type TextNote } from "@/lib/floor-plan/model";
 
 function NoteText({ note, onChange }: { note: TextNote; onChange: (text: string) => void }) {
   return <label className="fp-field"><span>Construction note</span><textarea aria-label="Construction note" rows={6} maxLength={2000} value={note.text} onChange={e => onChange(e.target.value)} autoFocus onFocus={e => { if (e.target.value === "Construction note") e.target.select(); }} placeholder="Describe the construction work…" /></label>;
@@ -39,14 +39,14 @@ export function PropertyPanel({ plan, selection, selections, rooms, commit, remo
   const utility = selection.type === "utility" ? plan.utilities.find(u => u.id === selection.id) : undefined;
   const note = selection.type === "text" ? plan.notes.find(n => n.id === selection.id) : undefined;
   const room = selection.type === "room" ? rooms.find(r => r.id === selection.id) : undefined;
-  const title = wall ? `${wall.kind === "exterior" ? "Exterior" : "Interior"} wall` : fixture ? CATALOG_MAP.get(fixture.catalogId)?.name ?? "Fixture" : opening ? `${opening.kind === "door" ? "Door" : "Window"}` : room ? "Room & finish" : utility ? "Utility run" : note ? "Construction note" : "Selection";
+  const title = wall ? `${wall.kind === "exterior" ? "Exterior" : "Interior"} wall` : fixture ? CATALOG_MAP.get(fixture.catalogId)?.name ?? "Fixture" : opening ? `${opening.kind === "door" ? "Door" : opening.kind === "window" ? "Window" : "Opening"}` : room ? "Room & finish" : utility ? "Utility run" : note ? "Construction note" : "Selection";
   const updateNote = (patch: Partial<TextNote>) => commit({ ...plan, notes: plan.notes.map(n => n.id === note?.id ? { ...n, ...patch } : n) });
   const updateFixture = (patch: Partial<NonNullable<typeof fixture>>) => commit({ ...plan, fixtures: plan.fixtures.map(f => f.id === fixture?.id ? { ...f, ...patch } : f) });
   const updateOpening = (patch: Partial<NonNullable<typeof opening>>) => {
     if (!opening) return;
     const w = plan.walls.find(w => w.id === opening.wallId)!;
     const updated = { ...opening, ...patch }, t = fitOpening(w, updated.width, updated.t, plan.openings, opening.id, { kind: updated.kind, walls: plan.walls });
-    if (t === null) { error("Doors and windows need 4″ of clearance from adjacent walls and must not overlap another opening."); return; }
+    if (t === null) { error(opening.kind === "opening" ? "This opening overlaps another opening or extends beyond its wall. Choose another position or a smaller width." : "Doors and windows need 4″ of clearance from adjacent walls and must not overlap another opening."); return; }
     commit({ ...plan, openings: plan.openings.map(o => o.id === opening.id ? { ...updated, t } : o) });
   };
   return <div className="fp-properties">
@@ -63,6 +63,7 @@ export function PropertyPanel({ plan, selection, selections, rooms, commit, remo
       <p className="fp-field-note">Drag either endpoint to reshape. Existing 90° corners stay square and connected walls stretch to fit. Openings follow their wall; openings that no longer fit are removed.</p>
     </> : null}
     {fixture ? <>
+      {fixture.catalogId === "stairs" ? <NumberField label="Number of steps" value={fixture.steps ?? DEFAULT_STAIR_STEPS} min={1} max={MAX_STAIR_STEPS} suffix="steps" onChange={steps => { if (Number.isInteger(steps)) updateFixture({ steps }); else error("Enter a whole number of steps."); }} /> : null}
       <div className="fp-property-grid"><NumberField label="Width" value={fixture.width} min={1} max={600} onChange={n => updateFixture({ width: n })} /><NumberField label="Depth" value={fixture.depth} min={1} max={600} onChange={n => updateFixture({ depth: n })} /><NumberField label="Position X" value={fixture.x} onChange={n => updateFixture({ x: n })} /><NumberField label="Position Y" value={fixture.y} onChange={n => updateFixture({ y: n })} /></div>
       <NumberField label="Rotation" value={fixture.rotation} min={-3600} max={3600} suffix="°" onChange={n => updateFixture({ rotation: n })} />
       <p className="fp-field-note">Drag to move. R rotates by 90°. Arrow keys nudge by the grid spacing.</p>
@@ -70,7 +71,7 @@ export function PropertyPanel({ plan, selection, selections, rooms, commit, remo
     {opening ? <>
       <NumberField label="Opening width" value={opening.width} min={6} max={240} onChange={n => updateOpening({ width: n })} />
       <NumberField label="Position along wall" value={opening.t * distance(plan.walls.find(w => w.id === opening.wallId)!.a, plan.walls.find(w => w.id === opening.wallId)!.b)} min={0} max={12000} onChange={n => { const w = plan.walls.find(w => w.id === opening.wallId)!; updateOpening({ t: n / distance(w.a, w.b) }); }} />
-      <p className="fp-field-note">Position measures from the wall start to the center of the opening. Drag along the wall to reposition. Jambs stay at least 4″ from adjacent wall faces.</p>
+      <p className="fp-field-note">Position measures from the wall start to the center of the opening. Drag along the wall to reposition. {opening.kind === "opening" ? "An opening can reach either end of the wall or span its entire length." : "Jambs stay at least 4″ from adjacent wall faces."}</p>
       {opening.kind === "door" ? <>
         <div className="fp-door-controls">
           <button className="fp-button fp-wide" aria-pressed={opening.hinge === "right"} title={`Current hinge: ${opening.hinge ?? "left"} jamb`} onClick={() => updateOpening({ hinge: opening.hinge === "right" ? "left" : "right" })}><FlipHorizontal size={15} />Flip hinge side</button>

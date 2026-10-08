@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { automaticDimensions, wallSegments } from "../apps/web/src/lib/floor-plan/dimensions";
-import { bounds, detectRooms, fitOpening, moveWallPoint, moveWalls, normalizeOpenings, offsetPolygon, pointInPolygon, polygonArea, roofPolygons, snapPoint } from "../apps/web/src/lib/floor-plan/geometry";
+import { layoutDimensions, labelsOverlap } from "../apps/web/src/lib/floor-plan/dimension-layout";
+import { bounds, detectRooms, fitOpening, moveWallPoint, moveWalls, normalizeOpenings, offsetPolygon, pointInPolygon, polygonArea, roofPolygons, snapPoint, wallFaceGeometry } from "../apps/web/src/lib/floor-plan/geometry";
 import { blankPlan, DEFAULT_LAYERS, formatLength, parsePlan, starterPlan, type Point, type Wall } from "../apps/web/src/lib/floor-plan/model";
 import { clientPlanError, planFingerprint } from "../apps/web/src/lib/floor-plan/client-plans";
 import { roofForPolygon, roofLayouts } from "../apps/web/src/lib/floor-plan/roof";
@@ -30,6 +31,89 @@ describe("client sync", () => {
 });
 
 const wall = (id: string, a: Point, b: Point, kind: Wall["kind"] = "exterior"): Wall => ({ id, a, b, kind, thickness: 6 });
+
+describe("readable dimension labels", () => {
+  test("measurements below six inches are omitted without losing measured geometry", () => {
+    const dimensions = [5.875, 6, 12].map((value, i) => ({ id: `span-${i}`, a: { x: i * 100, y: 0 }, b: { x: i * 100 + value, y: 0 }, value, offset: 14, interior: true }));
+    const before = JSON.stringify(dimensions);
+    expect(layoutDimensions(dimensions, 5).map(mark => mark.dimension.value)).toEqual([6, 12]);
+    expect(JSON.stringify(dimensions)).toBe(before);
+  });
+  test("small and rotated rooms retain two readable dimension sides at every zoom", () => {
+    for (const angle of [0, Math.PI / 4, Math.PI / 2]) {
+      const p = rectangle();
+      const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      p.walls = p.walls.map(w => ({ ...w, a: rotate({ x: w.a.x * 54 / 240, y: w.a.y * 42 / 180 }), b: rotate({ x: w.b.x * 54 / 240, y: w.b.y * 42 / 180 }) }));
+      const dimensions = automaticDimensions(p), before = JSON.stringify(dimensions);
+      const fit = layoutDimensions(dimensions), zoomed = layoutDimensions(dimensions, 5);
+      for (const layout of [layoutDimensions(dimensions, .7), fit, zoomed]) {
+        const labels = layout.flatMap(mark => mark.labelBounds ? [mark.labelBounds] : []);
+        for (let i = 0; i < labels.length; i++) for (let j = i + 1; j < labels.length; j++) expect(labelsOverlap(labels[i], labels[j])).toBe(false);
+        const sides = layout.filter(mark => mark.dimension.roomId && mark.labelBounds).map(mark => mark.dimension);
+        expect(sides.length).toBeGreaterThanOrEqual(2);
+        const first = sides[0];
+        expect(sides.some(dim => Math.abs((first.b.x - first.a.x) * (dim.b.y - dim.a.y) - (first.b.y - first.a.y) * (dim.b.x - dim.a.x)) > 1)).toBe(true);
+      }
+      expect(fit.some(mark => mark.dimension.roomId && mark.dimension.hideLabel)).toBe(true);
+      expect(JSON.stringify(dimensions)).toBe(before);
+      for (const mark of fit.filter(mark => mark.labelBounds && mark.dimension.roomId)) {
+        const resized = editDimension(p, mark.dimension.id, mark.dimension.value + 12);
+        expect(automaticDimensions(resized).find(dim => dim.id === mark.dimension.id)!.value).toBeCloseTo(mark.dimension.value + 12);
+      }
+      const label = zoomed.find(mark => mark.dimension.roomId && mark.labelBounds)!;
+      expect(automaticDimensions(editDimension(p, label.dimension.id, label.dimension.value + 12)).find(dim => dim.id === label.dimension.id)!.value).toBeCloseTo(label.dimension.value + 12);
+    }
+  });
+  test("a gap width keeps its label when a nearby room measurement would collide", () => {
+    const gap = { id: "gap", a: { x: 0, y: 0 }, b: { x: 36, y: 0 }, value: 36, offset: 0, interior: true, doorway: true, openingId: "opening" };
+    const room = { id: "room", roomId: "small-room", a: { x: 0, y: 2 }, b: { x: 48, y: 2 }, value: 48, offset: 0, interior: true };
+    const marks = layoutDimensions([room, gap]);
+    expect(marks.find(mark => mark.dimension.id === "gap")!.labelBounds).toBeDefined();
+    expect(marks.find(mark => mark.dimension.id === "room")!.dimension.hideLabel).toBe(true);
+    expect(room).not.toHaveProperty("hideLabel");
+  });
+  test("adjoining narrow rooms each retain two measuring sides, including fractional widths", () => {
+    for (const width of [36, 39.5, 54]) {
+      const p = blankPlan(), points = [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: 84 }, { x: 0, y: 84 }];
+      p.walls = points.map((a, i) => wall(`w${i}`, a, points[(i + 1) % points.length]));
+      p.walls.push(wall("partition", { x: 0, y: 42 }, { x: width, y: 42 }, "interior"));
+      const layout = layoutDimensions(automaticDimensions(p), .69);
+      for (const room of detectRooms(p.walls)) {
+        const sides = layout.filter(mark => mark.dimension.roomId === room.id && mark.labelBounds).map(mark => mark.dimension);
+        expect(sides.length).toBeGreaterThanOrEqual(2);
+        expect(sides.some(dim => dim.a.x === dim.b.x)).toBe(true);
+        expect(sides.some(dim => dim.a.y === dim.b.y)).toBe(true);
+      }
+      const boxes = layout.flatMap(mark => mark.labelBounds ? [mark.labelBounds] : []);
+      for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) expect(labelsOverlap(boxes[i], boxes[j])).toBe(false);
+      if (width === 36) expect(layout.some(mark => mark.label === "30″")).toBe(true);
+      if (width === 39.5) expect(layout.some(mark => mark.label === "33½″")).toBe(true);
+    }
+  });
+  test("zooming out preserves readable text size and suppresses labels that no longer fit", () => {
+    const dimensions = [24, 180].map((value, i) => ({ id: `span-${i}`, a: { x: 0, y: i * 100 }, b: { x: value, y: i * 100 }, value, offset: 14, interior: true }));
+    const marks = layoutDimensions(dimensions, .5);
+    expect(marks.find(mark => mark.dimension.value === 180)!.fontSize * .5).toBeCloseTo(11 - 4 / 3);
+    expect(marks.find(mark => mark.dimension.value === 24)!.dimension.hideLabel).toBe(true);
+  });
+  test("zooming in magnifies dimension text without reducing its drawing font size", () => {
+    const dimensions = [{ id: "room-side", a: { x: 0, y: 0 }, b: { x: 180, y: 0 }, value: 180, offset: 14, interior: true }, { id: "overall", a: { x: 0, y: 100 }, b: { x: 240, y: 100 }, value: 240, offset: 14, overall: true }, { id: "gap", a: { x: 0, y: 200 }, b: { x: 36, y: 200 }, value: 36, offset: 0, doorway: true, interior: true }];
+    const baseline = layoutDimensions(dimensions), zoomed = layoutDimensions(dimensions, 5);
+    for (let i = 0; i < baseline.length; i++) {
+      expect(zoomed[i].fontSize).toBe(baseline[i].fontSize);
+      expect(zoomed[i].fontSize * 5).toBeGreaterThan(baseline[i].fontSize);
+      expect(zoomed[i].labelBounds).toBeDefined();
+    }
+  });
+  test("upward exterior labels use their rendered side of the line when checking collisions", () => {
+    const exterior = { id: "upward", a: { x: 0, y: 100 }, b: { x: 0, y: 0 }, value: 100, offset: 20 };
+    const nearby = { id: "nearby", a: { x: -20, y: 50 }, b: { x: 20, y: 50 }, value: 40, offset: 0, interior: true };
+    const marks = layoutDimensions([exterior, nearby]);
+    const box = marks.find(mark => mark.dimension.id === "upward")!.labelBounds!;
+    expect(box.x + box.width / 2).toBeCloseTo(20 - 4 - (11 - 4 / 3) * .35);
+    expect(marks.find(mark => mark.dimension.id === "nearby")!.dimension.hideLabel).toBe(true);
+  });
+});
 
 describe("object snapping to wall faces", () => {
   const shower = { id: "shower", catalogId: "shower", x: 24, y: 24, width: 48, depth: 48, rotation: 0 };
@@ -443,6 +527,34 @@ describe("wall connections and openings", () => {
       expect(fitOpening(w, 36, opening.t, [{ ...opening, id: "other" }], undefined, { kind: opening.kind, walls: p.walls })).toBeNull();
     });
   });
+  test("plain hallway openings can span the entire wall between adjoining walls", () => {
+    for (const angle of [0, Math.PI / 4, Math.PI / 2]) for (const reverse of [false, true]) {
+      const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      const walls = [wall("hallway", { x: 0, y: 0 }, { x: 36, y: 0 }, "interior"), wall("left", { x: 0, y: 0 }, { x: 0, y: 120 }), wall("right", { x: 36, y: 0 }, { x: 36, y: 120 })].map(w => ({ ...w, a: rotate(reverse ? w.b : w.a), b: rotate(reverse ? w.a : w.b) }));
+      const width = Math.hypot(walls[0].b.x - walls[0].a.x, walls[0].b.y - walls[0].a.y);
+      expect(fitOpening(walls[0], width, .5, [], undefined, { kind: "opening", walls })).toBe(.5);
+      expect(fitOpening(walls[0], width, .5, [], undefined, { kind: "door", walls })).toBeNull();
+      const opening = { id: "gap", wallId: "hallway", kind: "opening" as const, t: .5, width, flip: false };
+      expect(wallSegments(walls[0], { openings: [opening] })).toEqual([]);
+      expect(normalizeOpenings(walls, [opening])).toEqual([opening]);
+      const p = { ...blankPlan(), walls, openings: [opening] };
+      expect(parsePlan(p).openings[0]).toEqual(opening);
+    }
+  });
+  test("plain openings reach wall ends and crossing junctions while retaining width and overlap limits", () => {
+    const p = rectangle(), w = p.walls[0];
+    p.walls.push(wall("branch", { x: 120, y: 0 }, { x: 120, y: 90 }, "interior"));
+    const context = { kind: "opening" as const, walls: p.walls };
+    expect(fitOpening(w, 36, 0, [], undefined, context)! * 240).toBe(18);
+    expect(fitOpening(w, 36, 1, [], undefined, context)! * 240).toBe(222);
+    expect(fitOpening(w, 36, .5, [], undefined, context)).toBe(.5);
+    expect(fitOpening(w, 241, .5, [], undefined, context)).toBeNull();
+    const opening = { id: "gap", wallId: w.id, kind: "opening" as const, width: 36, t: 18 / 240, flip: false };
+    expect(fitOpening(w, 36, 0, [opening], opening.id)).toBe(opening.t);
+    expect(fitOpening(w, 36, 0, [opening], undefined, context)).toBeNull();
+    const moved = moveSelection({ ...p, openings: [opening] }, [{ type: "opening", id: opening.id }], { x: 6, y: 0 });
+    expect(moved.openings[0].t * 240).toBe(24);
+  });
   test("openings cut actual gaps in rendered walls and dimension chains", () => {
     const p = rectangle(), w = p.walls[0];
     p.openings.push({ id: "d", wallId: w.id, kind: "door", width: 36, t: 0.5, flip: false });
@@ -464,7 +576,109 @@ describe("wall connections and openings", () => {
   });
 });
 
+describe("exterior dimension placement", () => {
+  test("an exterior wall made inset by another wall keeps its chain opposite the interior chain", () => {
+    for (const reverse of [false, true]) {
+      const p = rectangle();
+      p.walls.push(wall("outer-west", { x: -48, y: 60 }, { x: -48, y: 120 }));
+      if (reverse) [p.walls[3].a, p.walls[3].b] = [p.walls[3].b, p.walls[3].a];
+      const dimensions = automaticDimensions(p);
+      const exterior = dimensions.find(d => d.id === "wall:w3:segment:0")!;
+      const interior = dimensions.find(d => d.roomId && d.a.x === 3 && d.b.x === 3)!;
+      const lineX = (dim: typeof exterior) => dim.a.x - (dim.b.y - dim.a.y) / dim.value * dim.offset;
+      expect(lineX(exterior)).toBe(-30);
+      expect(lineX(interior)).toBe(17);
+    }
+  });
+  test("exterior chains stay outside angled and concave footprints regardless of wall direction", () => {
+    const footprints = [
+      [{ x: 0, y: 0 }, { x: 240, y: 0 }, { x: 240, y: 180 }, { x: 0, y: 180 }],
+      [{ x: 0, y: 0 }, { x: 240, y: 0 }, { x: 240, y: 120 }, { x: 120, y: 120 }, { x: 120, y: 240 }, { x: 0, y: 240 }],
+    ];
+    for (const corners of footprints) for (const angle of [0, Math.PI / 4, Math.PI / 2]) for (const reverse of [false, true]) for (const divided of [false, true]) {
+      const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      const points = corners.map(rotate), p = blankPlan();
+      p.walls = points.map((a, i) => wall(`outside-${i}`, reverse ? points[(i + 1) % points.length] : a, reverse ? a : points[(i + 1) % points.length]));
+      if (divided) p.walls.push(wall("partition", rotate({ x: 0, y: 60 }), rotate({ x: 240, y: 60 }), "interior"));
+      const dimensions = automaticDimensions(p).filter(d => !d.interior);
+      expect(dimensions.length).toBeGreaterThanOrEqual(points.length);
+      for (const dim of dimensions) {
+        const midpoint = { x: (dim.a.x + dim.b.x) / 2, y: (dim.a.y + dim.b.y) / 2 };
+        const edge = points.findIndex((a, i) => {
+          const b = points[(i + 1) % points.length];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const along = ((midpoint.x - a.x) * dx + (midpoint.y - a.y) * dy) / (dx * dx + dy * dy);
+          return along >= 0 && along <= 1 && Math.abs(dx * (midpoint.y - a.y) - dy * (midpoint.x - a.x)) / Math.hypot(dx, dy) < .01;
+        });
+        expect(edge).toBeGreaterThanOrEqual(0);
+        const a = points[edge], b = points[(edge + 1) % points.length];
+        const length = Math.hypot(dim.b.x - dim.a.x, dim.b.y - dim.a.y);
+        const offset = { x: -(dim.b.y - dim.a.y) / length * dim.offset, y: (dim.b.x - dim.a.x) / length * dim.offset };
+        // Clockwise screen-coordinate footprints have their interior to the
+        // left of each directed edge; exterior chains must be to the right.
+        expect((b.x - a.x) * offset.y - (b.y - a.y) * offset.x).toBeLessThan(0);
+        expect(pointInPolygon({ x: midpoint.x + offset.x, y: midpoint.y + offset.y }, points)).toBe(false);
+      }
+    }
+  });
+});
+
 describe("clear room dimensions near walls", () => {
+  test("mixed straight wall runs align their inside faces and have one clear dimension", () => {
+    for (const angle of [0, Math.PI / 4, Math.PI / 2]) for (const reverse of [false, true]) for (const thickness of [4.5, 5.98, 8]) {
+      const p = rectangle();
+      p.walls[0].b = { x: 96, y: 0 };
+      p.walls.push({ ...wall("continuation", { x: 96, y: 0 }, { x: 240, y: 0 }, "interior"), thickness });
+      const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      const local = (p: Point) => ({ x: p.x * Math.cos(angle) + p.y * Math.sin(angle), y: -p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      p.walls = p.walls.map(w => ({ ...w, a: rotate(reverse ? w.b : w.a), b: rotate(reverse ? w.a : w.b) }));
+      const before = JSON.stringify(p), rooms = detectRooms(p.walls), bodies = wallFaceGeometry(p.walls, rooms);
+      const exterior = bodies.find(w => w.id === "w0")!, interior = bodies.find(w => w.id === "continuation")!;
+      expect(local(exterior.a).y + exterior.thickness / 2).toBeCloseTo(3);
+      expect(local(interior.a).y + interior.thickness / 2).toBeCloseTo(3);
+      expect(interior.thickness).toBe(thickness);
+      const top = automaticDimensions(p).filter(d => d.roomId && Math.abs(local(d.a).y - 3) < .01 && Math.abs(local(d.b).y - 3) < .01);
+      expect(top).toHaveLength(1);
+      expect(top[0].value).toBeCloseTo(234);
+      expect(rooms[0].area).toBeCloseTo(234 * 174 / 144);
+      expect(JSON.stringify(p)).toBe(before);
+      for (const fixed of ["start", "end"] as const) {
+        const resized = editDimension(p, top[0].id, 270, fixed);
+        expect(automaticDimensions(resized).find(d => d.id === top[0].id)!.value).toBeCloseTo(270);
+        expect(detectRooms(resized.walls)).toHaveLength(1);
+      }
+    }
+  });
+  test("openings on either part of a mixed run retain jamb chains and can be repositioned", () => {
+    const p = rectangle();
+    p.walls[0].b = { x: 96, y: 0 };
+    p.walls.push({ ...wall("continuation", { x: 96, y: 0 }, { x: 240, y: 0 }, "interior"), thickness: 4.5 });
+    p.openings = [{ id: "window", wallId: "w0", kind: "window", t: .5, width: 24, flip: false }, { id: "door", wallId: "continuation", kind: "door", t: .5, width: 36, flip: false }];
+    const dimensions = automaticDimensions(p), door = dimensions.find(d => d.doorway)!;
+    expect(door.a.y).toBe(.75);
+    expect(door.b.y).toBe(.75);
+    const top = dimensions.filter(d => d.roomId && d.a.y === 3 && d.b.y === 3);
+    expect(top.map(d => d.value)).toEqual([33, 24, 90, 51]);
+    const span = top.find(d => d.value === 90)!;
+    const moved = editDimension(p, span.id, 96);
+    expect(moved.walls).toEqual(p.walls);
+    expect(moved.openings.find(o => o.id === "door")!.t * 144).toBeCloseTo(78);
+    expect(automaticDimensions(moved).find(d => d.id === span.id)!.value).toBeCloseTo(96);
+    const fixture = { id: "cabinet", catalogId: "cabinet", width: 24, depth: 24, rotation: 0, x: 180, y: 20 };
+    expect(snapFixtureToWalls(fixture, p, 10)).toEqual({ x: 180, y: 15 });
+  });
+  test("mixed runs stay aligned after thickness and junction edits while perpendicular branches still split dimensions", () => {
+    const p = rectangle();
+    p.walls[0] = { ...p.walls[0], b: { x: 96, y: 0 }, thickness: 8 };
+    p.walls.push({ ...wall("continuation", { x: 96, y: 0 }, { x: 240, y: 0 }, "interior"), thickness: 4.5 });
+    const moved = moveWallPoint(p, "w0", "b", { x: 120, y: 0 });
+    expect(moved.walls.find(w => w.id === "continuation")!.a).toEqual({ x: 120, y: 0 });
+    const top = (plan: typeof p) => automaticDimensions(plan).filter(d => d.roomId && d.a.y === 4 && d.b.y === 4);
+    expect(top(moved).map(d => d.value)).toEqual([234]);
+    moved.walls.push({ ...wall("stub", { x: 160, y: 0 }, { x: 160, y: 60 }, "interior"), thickness: 4.5 });
+    expect(top(moved).map(d => d.value)).toEqual([154.75, 74.75]);
+    expect(detectRooms(moved.walls)).toHaveLength(1);
+  });
   test("adding, moving, rotating and removing fixtures never changes interior dimension placement", () => {
     for (const angle of [0, Math.PI / 4]) {
       const p = starterPlan(); p.fixtures = [];
@@ -586,11 +800,48 @@ describe("clear room dimensions near walls", () => {
     expect(dimensions.some(d => d.id.startsWith("exterior:side:") && d.overall)).toBe(true);
     expect(new Set(dimensions.map(d => d.id)).size).toBe(dimensions.length);
   });
-  test("collinear T junctions do not split a room's full clear width", () => {
+  test("a T junction splits the room dimension at the partition faces", () => {
     const p = rectangle(); p.walls.push(wall("stub", { x: 120, y: 0 }, { x: 120, y: 60 }, "interior"));
     const dimensions = automaticDimensions(p), room = detectRooms(p.walls)[0];
-    expect(dimensions.filter(d => d.roomId === room.id).map(d => d.value).sort((a, b) => a - b)).toEqual([174, 174, 234, 234]);
+    const top = dimensions.filter(d => d.roomId === room.id && d.a.y === 3 && d.b.y === 3);
+    expect(top.map(d => [d.a.x, d.b.x, d.value])).toEqual([[3, 117, 114], [123, 237, 114]]);
+    expect(dimensions.filter(d => d.roomId === room.id).map(d => d.value).sort((a, b) => a - b)).toEqual([114, 114, 174, 174, 234]);
     expect(dimensions.some(d => d.id === "wall:stub:segment:0" && d.value === 60)).toBe(true);
+  });
+  test("T junctions split only the affected face of an interior wall in any orientation", () => {
+    for (const angle of [0, Math.PI / 4, Math.PI / 2]) for (const reverse of [false, true]) {
+      const p = rectangle();
+      p.walls.push(wall("partition", { x: 0, y: 90 }, { x: 240, y: 90 }, "interior"));
+      p.walls.push({ ...wall("stub", { x: 96, y: 90 }, { x: 96, y: 150 }, "interior"), thickness: 4.5 });
+      const rotate = (point: Point) => ({ x: point.x * Math.cos(angle) - point.y * Math.sin(angle), y: point.x * Math.sin(angle) + point.y * Math.cos(angle) });
+      p.walls = p.walls.map(w => ({ ...w, a: rotate(reverse ? w.b : w.a), b: rotate(reverse ? w.a : w.b) }));
+      const local = (point: Point) => ({ x: point.x * Math.cos(angle) + point.y * Math.sin(angle), y: -point.x * Math.sin(angle) + point.y * Math.cos(angle) });
+      const dimensions = automaticDimensions(p).filter(d => d.roomId);
+      const face = (y: number) => dimensions.filter(d => Math.abs(local(d.a).y - y) < .01 && Math.abs(local(d.b).y - y) < .01).sort((a, b) => local(a.a).x - local(b.a).x);
+      expect(face(87)).toHaveLength(1);
+      expect(face(87)[0].value).toBeCloseTo(234);
+      const split = face(93);
+      expect(split).toHaveLength(2);
+      expect(split[0].value).toBeCloseTo(90.75);
+      expect(split[1].value).toBeCloseTo(138.75);
+      expect(detectRooms(p.walls)).toHaveLength(2);
+    }
+  });
+  test("multiple T partitions and opening jambs share a clear dimension chain", () => {
+    const p = rectangle();
+    p.walls.push(wall("first", { x: 72, y: 0 }, { x: 72, y: 60 }, "interior"), wall("second", { x: 168, y: 60 }, { x: 168, y: 0 }, "interior"));
+    p.openings.push({ id: "window", wallId: "w0", kind: "window", width: 24, t: .5, flip: false });
+    const top = automaticDimensions(p).filter(d => d.roomId && d.a.y === 3 && d.b.y === 3);
+    expect(top.map(d => [d.a.x, d.b.x, d.value])).toEqual([[3, 69, 66], [75, 108, 33], [108, 132, 24], [132, 165, 33], [171, 237, 66]]);
+    p.walls = p.walls.filter(w => w.id !== "first" && w.id !== "second");
+    expect(automaticDimensions(p).filter(d => d.roomId && d.a.y === 3 && d.b.y === 3).map(d => d.value)).toEqual([105, 24, 105]);
+  });
+  test("collinear continuations and partitions on the opposite side or away from a wall do not split its room face", () => {
+    const p = rectangle();
+    p.walls.push(wall("outside", { x: 120, y: 0 }, { x: 120, y: -60 }, "interior"), wall("detached", { x: 180, y: 30 }, { x: 180, y: 60 }, "interior"));
+    p.walls[0].b = { x: 60, y: 0 };
+    p.walls.push(wall("continuation", { x: 60, y: 0 }, { x: 240, y: 0 }));
+    expect(automaticDimensions(p).filter(d => d.roomId && d.a.y === 3 && d.b.y === 3).map(d => d.value)).toEqual([234]);
   });
   test("angled and concave rooms use actual clear wall faces", () => {
     const p = blankPlan();
@@ -659,6 +910,22 @@ describe("editing dimensions", () => {
     expect(moved.walls[1].a.x).toBe(300);
     expect(moved.walls[1].b.x).toBe(300);
     expect(detectRooms(moved.walls)).toHaveLength(1);
+  });
+  test("split room dimensions resize a dangling T partition or the opposite boundary from either end", () => {
+    const p = rectangle();
+    p.walls.push(wall("stub", { x: 120, y: 0 }, { x: 120, y: 60 }, "interior"));
+    const dimensions = automaticDimensions(p).filter(d => d.roomId && d.a.y === 3 && d.b.y === 3);
+    expect(dimensions).toHaveLength(2);
+    for (const dim of dimensions) for (const fixed of ["start", "end"] as const) {
+      const originalEnds = dimensionEnds(dim), moved = editDimension(p, dim.id, 144, fixed);
+      const updated = automaticDimensions(moved).find(d => d.id === dim.id)!;
+      expect(updated.value).toBeCloseTo(144);
+      expect(dimensionEnds(updated)[fixed]).toEqual(originalEnds[fixed]);
+      const stub = moved.walls.find(w => w.id === "stub")!;
+      expect(stub.a.x).toBe(stub.b.x);
+      expect(stub.a.y).toBe(0);
+      expect(detectRooms(moved.walls)).toHaveLength(1);
+    }
   });
   test("jamb-offset edits reposition openings and adjoining wall spans keep the fixed jamb in place", () => {
     const p = rectangle();
@@ -802,6 +1069,33 @@ describe("group selections", () => {
 });
 
 describe("editable backups", () => {
+  test("stairs preserve step counts through backups and reject fractional or invalid counts", () => {
+    const p = rectangle();
+    const stairs = { id: "stairs", catalogId: "stairs", width: 36, depth: 120, x: 60, y: 90, rotation: 90, steps: 18 };
+    p.fixtures.push(stairs);
+    expect(parsePlan(JSON.parse(JSON.stringify(p))).fixtures[0]).toEqual(stairs);
+    const { steps, ...legacy } = stairs;
+    expect(parsePlan({ ...p, fixtures: [legacy] }).fixtures[0].steps).toBe(12);
+    for (const steps of [0, -1, 1.5, 101, NaN, Infinity, null, "12"]) expect(() => parsePlan({ ...p, fixtures: [{ ...stairs, steps }] })).toThrow();
+    expect(planFingerprint(p)).not.toBe(planFingerprint({ ...p, fixtures: [{ ...stairs, steps: 19 }] }));
+    expect(moveSelection(p, [{ type: "fixture", id: stairs.id }], { x: 12, y: 0 }).fixtures[0]).toMatchObject({ steps: 18, rotation: 90 });
+  });
+  test("plain openings preserve adjustable widths and cut wall and dimension gaps", () => {
+    const p = rectangle();
+    const opening = { id: "gap", wallId: "w0", kind: "opening" as const, width: 48, t: .5, flip: false };
+    p.openings.push(opening);
+    expect(parsePlan(JSON.parse(JSON.stringify(p))).openings[0]).toEqual(opening);
+    expect(wallSegments(p.walls[0], p)).toEqual([{ a: { x: 0, y: 0 }, b: { x: 96, y: 0 } }, { a: { x: 144, y: 0 }, b: { x: 240, y: 0 } }]);
+    const dimensions = automaticDimensions(p), gap = dimensions.find(d => d.openingId === opening.id && !d.hideLabel)!;
+    expect(gap.value).toBe(48);
+    expect(gap.offset).toBe(0);
+    expect(dimensions.filter(d => d.roomId && !d.openingId && d.a.y === 3 && d.b.y === 3).map(d => d.value)).toEqual([93, 93]);
+    const wider = { ...p, openings: [{ ...opening, width: 60 }] };
+    expect(automaticDimensions(wider).find(d => d.openingId === opening.id)!.value).toBe(60);
+    expect(moveSelection(p, [{ type: "opening", id: opening.id }], { x: 12, y: 0 }).openings[0].t).toBe(.55);
+    expect(deleteSelection(p, [{ type: "opening", id: opening.id }]).openings).toEqual([]);
+    expect(detectRooms(p.walls)).toHaveLength(1);
+  });
   test("construction notes round-trip, older plans open with no notes, and invalid annotations are rejected", () => {
     const p = rectangle();
     const note = { id: "note", x: 360, y: 0, width: 144, fontSize: 8, text: "Remove partition.\nVerify <existing> & proposed dimensions.", border: true };

@@ -4,7 +4,7 @@ import {
   Bath, BedDouble, Check, ChevronDown, ChevronRight, CircleHelp, CircuitBoard, Copy, Download,
   DoorOpen, Droplets, Eye, EyeOff, FileJson, FolderOpen, Grid2X2, Hand, House, Layers3, LayoutTemplate,
   Menu, MousePointer2, PanelRight, PencilRuler, Plus, Search, Settings2, Square, Trash2,
-  Upload, X, Zap, Save, Cloud, Type,
+  Upload, X, Zap, Save, Cloud, Type, ChartNoAxesColumnIncreasing, RectangleHorizontal,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATALOG, CATALOG_MAP, CATEGORIES, type CatalogCategory } from "@/lib/floor-plan/catalog";
@@ -25,7 +25,7 @@ import { clientPlanError, planFingerprint, STAGE_NAMES, type ClientPlanGateway, 
 import "./floor-plan.css";
 
 type SidebarTab = "build" | "objects" | "systems" | "layers";
-const DEFAULT_SETTINGS: DrawSettings = { grid: 6, snap: true, orthogonal: true, exteriorThickness: 6, interiorThickness: 4.5, doorWidth: 36, windowWidth: 48, length: 0 };
+const DEFAULT_SETTINGS: DrawSettings = { grid: 6, snap: true, orthogonal: true, exteriorThickness: 6, interiorThickness: 4.5, doorWidth: 36, windowWidth: 48, openingWidth: 36, length: 0 };
 const TOOLS = [
   { id: "select", name: "Select", icon: MousePointer2, shortcut: "V" },
   { id: "pan", name: "Pan", icon: Hand, shortcut: "H" },
@@ -34,6 +34,8 @@ const TOOLS = [
   { id: "rectangle", name: "Rectangle", icon: Square, shortcut: "B" },
   { id: "door", name: "Door", icon: DoorOpen, shortcut: "D" },
   { id: "window", name: "Window", icon: Grid2X2, shortcut: "W" },
+  { id: "opening", name: "Opening", icon: RectangleHorizontal, shortcut: "O" },
+  { id: "stairs", name: "Stairs", icon: ChartNoAxesColumnIncreasing, shortcut: "S" },
   { id: "text", name: "Textbox", icon: Type, shortcut: "T" },
 ] as const;
 const LAYER_NAMES: Record<keyof Layers, string> = { grid: "Drawing grid", dimensions: "Auto dimensions", roof: "Roof structure", fixtures: "Furniture & fixtures", utilities: "Utility runs", finishes: "Floor finishes", labels: "Room labels", notes: "Construction notes" };
@@ -114,7 +116,7 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
       return next.length === previous.length ? previous : next;
     });
   }, [plan, rooms, layers]);
-  const chooseTool = (next: Tool) => { setTool(next); if (next !== "select") setSelection(null); };
+  const chooseTool = (next: Tool) => { setTool(next); if (next !== "select") setSelection(null); if (next === "stairs") setLayers(l => ({ ...l, fixtures: true })); };
   const remove = () => {
     if (!selections.some(s => s.type !== "room")) return;
     commit(deleteSelection(plan, selections)); setSelection(null);
@@ -137,7 +139,7 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
     if (selection?.type === "fixture") commit({ ...plan, fixtures: plan.fixtures.map(f => f.id === selection.id ? { ...f, rotation: (f.rotation + 90) % 360 } : f) });
   };
   const rotate = () => {
-    if (tool === "fixture") setPlacementRotation(r => (r + 90) % 360);
+    if (tool === "fixture" || tool === "stairs") setPlacementRotation(r => (r + 90) % 360);
     else rotateSelection();
   };
   const nudge = (key: string, precise: boolean) => {
@@ -174,7 +176,7 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
       if (key === "r") { rotate(); return; }
       if (key === "?") { setModal("help"); return; }
       const next = TOOLS.find(t => t.shortcut.toLowerCase() === key);
-      if (next) { chooseTool(next.id); if (["exterior", "interior", "rectangle", "door", "window", "text"].includes(next.id)) setTab("build"); }
+      if (next) { chooseTool(next.id); if (["exterior", "interior", "rectangle", "door", "window", "opening", "stairs", "text"].includes(next.id)) setTab("build"); }
   };
   useEffect(() => {
     const handler = (e: KeyboardEvent) => keyboardHandler.current(e);
@@ -182,7 +184,7 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
   }, []);
   const select = useCallback((s: Selection | null) => { setSelection(s); }, []);
   const pickCatalogItem = (catalogId: string) => {
-    setCatalogId(catalogId); chooseTool("fixture"); setPlacementRotation(0); setLayers(l => ({ ...l, fixtures: true })); setLeftOpen(false);
+    setCatalogId(catalogId); chooseTool(catalogId === "stairs" ? "stairs" : "fixture"); setPlacementRotation(0); setLayers(l => ({ ...l, fixtures: true })); setLeftOpen(false);
   };
   const importFile = async (file?: File) => {
     if (!file) return;
@@ -303,6 +305,7 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
             <div className="fp-tool-list">{TOOLS.slice(2).map(({ id, name, icon: Icon, shortcut }) => <button key={id} className={tool === id ? "is-active" : ""} onClick={() => { chooseTool(id); setLeftOpen(false); }}><Icon size={18} /><span>{name}</span><kbd>{shortcut}</kbd></button>)}</div>
             <div className="fp-divider" /><span className="fp-kicker">Drawing defaults</span>
             <div className="fp-property-grid"><NumberField label="Exterior thickness" value={settings.exteriorThickness} min={1} max={24} step={0.5} onChange={n => setSettings(s => ({ ...s, exteriorThickness: n }))} /><NumberField label="Interior thickness" value={settings.interiorThickness} min={1} max={24} step={0.5} onChange={n => setSettings(s => ({ ...s, interiorThickness: n }))} /><NumberField label="Door width" value={settings.doorWidth} min={6} max={240} onChange={n => setSettings(s => ({ ...s, doorWidth: n }))} /><NumberField label="Window width" value={settings.windowWidth} min={6} max={240} onChange={n => setSettings(s => ({ ...s, windowWidth: n }))} /></div>
+            <NumberField label="Default opening width" value={settings.openingWidth} min={6} max={240} onChange={openingWidth => setSettings(s => ({ ...s, openingWidth }))} />
             <NumberField label="Exact next wall length" value={settings.length} min={0} max={12000} onChange={n => setSettings(s => ({ ...s, length: n }))} /><p className="fp-field-note">Enter inches for a precise wall length. Use 0 to draw freely.</p>
             <div className="fp-tip-card"><LayoutTemplate size={19} /><div><strong>Let the plan do the measuring.</strong><p>Close the exterior to generate a roof. Choose Gable or Hip in Layers. Connect partitions to create rooms and clear dimensions.</p></div></div>
           </> : null}
@@ -331,7 +334,7 @@ export function FloorPlanEditor({ storageKey, clientPlans, initialClientId, init
             <div className="fp-tip-card"><Layers3 size={19} /><div><strong>Finish a room.</strong><p>Switch to Select and click inside any enclosed room to name it and choose flooring.</p></div></div>
           </> : null}
         </div>
-        <div className="fp-panel-footer"><span className="fp-kicker">Active tool</span><span><span className="fp-active-dot" />{activeToolName}</span>{tool === "fixture" ? <button aria-label="Rotate object preview" onClick={rotate}>Rotate {placementRotation}° <kbd>R</kbd></button> : null}</div>
+        <div className="fp-panel-footer"><span className="fp-kicker">Active tool</span><span><span className="fp-active-dot" />{activeToolName}</span>{tool === "fixture" || tool === "stairs" ? <button aria-label="Rotate object preview" onClick={rotate}>Rotate {placementRotation}° <kbd>R</kbd></button> : null}</div>
       </aside>
       <PlanCanvas key={plan.id} plan={plan} tool={tool} settings={settings} layers={layers} selection={selection} selections={selections} selectMany={setSelections} catalogId={catalogId} placementRotation={placementRotation} commit={commit} select={select} error={error} onZoom={setZoom} dimensionEditingAllowed={modal === null && !loadingPlan} onDimensionApply={(id, inches, fixedEnd) => commit(editDimension(plan, id, inches, fixedEnd))} onTextPlaced={() => { chooseTool("select"); setRightOpen(true); setLeftOpen(false); setLayers(l => ({ ...l, notes: true })); }} />
       <aside className={`fp-right-panel ${rightOpen ? "is-open" : ""}`} aria-label={selections.length ? "Selection properties" : "Plan details"}>

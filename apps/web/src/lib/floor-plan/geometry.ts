@@ -101,6 +101,7 @@ export function detectRooms(walls: Wall[]): Room[] {
   }
   for (const node of nodes.values()) node.edges.sort((a, b) => a.angle - b.angle);
   const visited = new Set<string>(), rooms: Room[] = [];
+  const boundaries = new Map<Room, Wall[]>();
   for (const [start, node] of nodes) for (const first of node.edges) {
     if (visited.has(`${start}>${first.to}`)) continue;
     let from = start, edge = first;
@@ -130,9 +131,68 @@ export function detectRooms(walls: Wall[]): Room[] {
     const inner = offsetPolygon(points, faceWalls.map(w => -w.thickness / 2));
     const wallIds = [...new Set(faceWalls.map(w => w.id))].sort();
     const roomId = wallIds.join("|");
-    rooms.push({ id: roomId, points, inner, wallIds, area: Math.max(0, polygonArea(inner) / 144), center: polygonCenter(inner) });
+    const room = { id: roomId, points, inner, wallIds, area: Math.max(0, polygonArea(inner) / 144), center: polygonCenter(inner) };
+    rooms.push(room); boundaries.set(room, faceWalls);
+  }
+  const aligned = wallFaceGeometry(walls, rooms);
+  const bodies = new Map(aligned.map(w => [w.id, w]));
+  for (const room of aligned === walls ? [] : rooms) {
+    const boundary = boundaries.get(room)!;
+    const offsets = room.points.map((a, i) => {
+      const b = room.points[(i + 1) % room.points.length], wall = boundary[i]!;
+      const body = bodies.get(wall.id)!, length = distance(a, b);
+      const shift = { x: body.a.x - wall.a.x, y: body.a.y - wall.a.y };
+      return -wall.thickness / 2 - (-(b.y - a.y) * shift.x + (b.x - a.x) * shift.y) / length;
+    });
+    room.inner = offsetPolygon(room.points, offsets);
+    room.area = Math.max(0, polygonArea(room.inner) / 144);
+    room.center = polygonCenter(room.inner);
   }
   return rooms.sort((a, b) => a.center.y - b.center.y || a.center.x - b.center.x);
+}
+
+function roomBoundaryWalls(room: Room, walls: Wall[]): (Wall | undefined)[] {
+  const candidates = walls.filter(w => room.wallIds.includes(w.id));
+  return room.points.map((a, i) => {
+    const b = room.points[(i + 1) % room.points.length];
+    return candidates.find(w => project(a, w.a, w.b).distance < EPS && project(b, w.a, w.b).distance < EPS);
+  });
+}
+
+// Keep graph centerlines connected while positioning the actual wall bodies.
+// On a straight mixed run, the exterior wall fixes the room-facing surface;
+// thinner interior segments move toward the room without changing thickness.
+export function wallFaceGeometry(walls: Wall[], suppliedRooms?: Room[]): Wall[] {
+  if (!walls.some(w => w.kind === "exterior") || !walls.some(w => w.kind === "interior")) return walls;
+  const rooms = suppliedRooms ?? detectRooms(walls);
+  const shifts = new Map<string, Point>();
+  for (const room of [...rooms].sort((a, b) => a.id.localeCompare(b.id))) {
+    const boundary = roomBoundaryWalls(room, walls), count = room.points.length;
+    const directions = room.points.map((a, i) => {
+      const b = room.points[(i + 1) % count], length = distance(a, b);
+      return { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
+    });
+    const corners = directions.flatMap((d, i) => {
+      const previous = directions[(i + count - 1) % count];
+      return Math.abs(cross(previous, d)) > 0.0001 || previous.x * d.x + previous.y * d.y < 0 ? [i] : [];
+    });
+    for (let c = 0; c < corners.length; c++) {
+      const start = corners[c], end = corners[(c + 1) % corners.length], run: Wall[] = [];
+      for (let i = start; i !== end; i = (i + 1) % count) if (boundary[i]) run.push(boundary[i]!);
+      const exterior = run.filter(w => w.kind === "exterior");
+      if (!exterior.length) continue;
+      const thickness = Math.max(...exterior.map(w => w.thickness)), d = directions[start];
+      for (const wall of run) {
+        if (wall.kind !== "interior" || shifts.has(wall.id)) continue;
+        const amount = (thickness - wall.thickness) / 2;
+        if (Math.abs(amount) > 1e-8) shifts.set(wall.id, { x: -d.y * amount, y: d.x * amount });
+      }
+    }
+  }
+  return shifts.size ? walls.map(wall => {
+    const shift = shifts.get(wall.id);
+    return shift ? { ...wall, a: { x: wall.a.x + shift.x, y: wall.a.y + shift.y }, b: { x: wall.b.x + shift.x, y: wall.b.y + shift.y } } : wall;
+  }) : walls;
 }
 
 // Positive distance expands a clockwise (screen-coordinate) polygon. Miter joins
@@ -237,11 +297,17 @@ function adjacentWallSpan(host: Wall, other: Wall): [number, number] | null {
 
 export function fitOpening(wall: Wall, width: number, t: number, others: Opening[] = [], exclude?: string, context?: { kind: Opening["kind"]; walls: Wall[] }) {
   const length = distance(wall.a, wall.b);
-  const clearance = OPENING_WALL_CLEARANCE, half = width / 2;
+  const kind = context?.kind ?? others.find(o => o.id === exclude)?.kind;
+  // A plain opening removes the selected wall, including its ends. Hallway
+  // connections do not need the jamb clearance reserved for doors/windows.
+  const plain = kind === "opening";
+  const clearance = plain ? 0 : OPENING_WALL_CLEARANCE, half = width / 2;
   if (width + clearance * 2 > length) return null;
   let spans: [number, number][] = [[half + clearance, length - half - clearance]];
-  if (context) for (const other of context.walls) {
-    const obstruction = adjacentWallSpan(wall, other);
+  const bodies = context && !plain ? wallFaceGeometry(context.walls) : [];
+  const host = bodies.find(w => w.id === wall.id) ?? wall;
+  if (context && !plain) for (const other of bodies) {
+    const obstruction = adjacentWallSpan(host, other);
     if (!obstruction) continue;
     const left = obstruction[0] - half - clearance, right = obstruction[1] + half + clearance;
     spans = spans.flatMap(([a, b]): [number, number][] => {

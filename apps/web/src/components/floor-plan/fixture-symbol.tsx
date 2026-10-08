@@ -1,10 +1,12 @@
 import { memo } from "react";
+import { DEFAULT_STAIR_STEPS } from "@/lib/floor-plan/model";
 
 // Symbols share a 100 × 100 local coordinate system; physical dimensions live in the model.
-const SymbolArtwork = memo(function SymbolArtwork({ symbol, dark = false, monochrome = false }: { symbol: string; dark?: boolean; monochrome?: boolean }) {
+const SymbolArtwork = memo(function SymbolArtwork({ symbol, steps = DEFAULT_STAIR_STEPS, dark = false, monochrome = false }: { symbol: string; steps?: number; dark?: boolean; monochrome?: boolean }) {
   const fill = (night: string, paper: string) => monochrome ? "#fff" : dark ? night : paper;
   const rect = <rect x="2" y="2" width="96" height="96" rx="5" fill={fill("#22242c", "#fdfdfa")} />;
   switch (symbol) {
+    case "stairs": return <g data-stair-steps={steps}><rect width="100" height="100" fill={fill("#22242c", "#fdfdfa")} />{Array.from({ length: steps }, (_, i) => <path key={i} data-stair-step={i + 1} d={`M0 ${(i + 1) * 100 / steps}H100`} />)}<path d="M50 88V12M40 22L50 12L60 22" strokeWidth="2.5" /></g>;
     case "bed": return <>{rect}<rect x="8" y="10" width="39" height="18" rx="4" /><rect x="53" y="10" width="39" height="18" rx="4" /><path d="M3 34H97M3 40H97" /><rect x="8" y="42" width="84" height="51" rx="2" fill={fill("#303440", "#e6ebe7")} /></>;
     case "sofa": return <>{rect}<rect x="12" y="8" width="76" height="19" rx="4" fill={fill("#303440", "#dee6e2")} /><rect x="3" y="12" width="11" height="80" rx="3" /><rect x="86" y="12" width="11" height="80" rx="3" /><path d="M15 78H85M50 28V77" /><path d="M10 98V100M90 98V100" /></>;
     case "table": return <><rect x="3" y="3" width="94" height="94" rx="10" fill={fill("#36302e", "#ece3d6")} /><circle cx="10" cy="10" r="3" /><circle cx="90" cy="10" r="3" /><circle cx="10" cy="90" r="3" /><circle cx="90" cy="90" r="3" /></>;
@@ -35,12 +37,13 @@ const SymbolArtwork = memo(function SymbolArtwork({ symbol, dark = false, monoch
 // Fit each physical silhouette to the model dimensions. Decorative padding in
 // the library symbol must not become a visible gap when an object meets a wall.
 const SYMBOL_BOUNDS: Record<string, [number, number, number, number]> = {
+  stairs: [0, 0, 100, 100],
   sofa: [2, 2, 96, 98], table: [3, 3, 94, 94], chair: [5, 2, 90, 98],
   toilet: [12, 2, 76, 96], bar: [2, 0, 96, 100], heater: [4, 4, 92, 92],
   outlet: [7, 7, 86, 86], gfci: [7, 7, 86, 86], light: [6, 6, 88, 88],
   smoke: [7, 7, 86, 86], drain: [6, 6, 88, 88], fan: [0, 0, 100, 100], switch: [0, 0, 100, 100],
 };
-export const FixtureSymbol = memo(function FixtureSymbol(props: { symbol: string; dark?: boolean; monochrome?: boolean }) {
+export const FixtureSymbol = memo(function FixtureSymbol(props: { symbol: string; steps?: number; dark?: boolean; monochrome?: boolean }) {
   const [x, y, width, height] = SYMBOL_BOUNDS[props.symbol] ?? [2, 2, 96, 96];
   return <g transform={`scale(${100 / width} ${100 / height}) translate(${-x} ${-y})`}><SymbolArtwork {...props} /></g>;
 });
