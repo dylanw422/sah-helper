@@ -7,6 +7,8 @@ import { roofForPolygon, roofLayouts } from "../apps/web/src/lib/floor-plan/roof
 
 import { A4, printBounds, printLayout } from "../apps/web/src/lib/floor-plan/print";
 import { noteLayout } from "../apps/web/src/lib/floor-plan/notes";
+import { parseLengthInput } from "../apps/web/src/lib/floor-plan/length-input";
+import { dimensionEnds, editDimension } from "../apps/web/src/lib/floor-plan/edit-dimension";
 
 describe("client sync", () => {
   test("timestamps do not mark an unchanged or undone plan as dirty", () => {
@@ -414,6 +416,110 @@ describe("clear room dimensions near walls", () => {
     const after = automaticDimensions(moved).filter(d => d.roomId).map(d => d.value);
     expect(after).not.toEqual(before);
     expect(after.some(value => value > 290)).toBe(true);
+  });
+});
+
+describe("editing dimensions", () => {
+  test("length input accepts inches, feet/inches, decimals, fractions and printed prime symbols", () => {
+    for (const [text, value] of [["10", 120], ["120", 1440], ["8.5", 102], [" 10 ", 120], ['120"', 120], ["10'", 120], ["10' 0\"", 120], ["8'-6\"", 102], [".5\"", .5], ["8' 6 1/2\"", 102.5], ["102½″", 102.5], ["8′ 6½″", 102.5], ["1/2", 6], ["8 1/2", 102], ['1/2"', .5], ["0' 6\"", 6], ["8.5'", 102]] as const) expect(parseLengthInput(text)).toBe(value);
+    for (const text of ["", "-12", "0", "Infinity", "NaN", "1/0", "10 6", "12ft", "1e3", "8''", '10" 4', "8' - -6\""]) expect(() => parseLengthInput(text)).toThrow();
+  });
+  test("an exterior total moves the entire end wall and its corners without drifting interior partitions", () => {
+    const p = rectangle(); p.walls.push(wall("partition", { x: 120, y: 0 }, { x: 120, y: 180 }, "interior"));
+    const moved = editDimension(p, "exterior:side:north:overall", 300);
+    expect(moved.walls.find(w => w.id === "w1")!.a).toEqual({ x: 300, y: 0 });
+    expect(moved.walls.find(w => w.id === "w1")!.b).toEqual({ x: 300, y: 180 });
+    expect(moved.walls.find(w => w.id === "w2")!.a).toEqual({ x: 300, y: 180 });
+    expect(moved.walls.find(w => w.id === "partition")).toEqual(p.walls.at(-1));
+    expect(detectRooms(moved.walls)).toHaveLength(2);
+    expect(roofPolygons(moved)[0].some(point => point.x > 300)).toBe(true);
+    expect(p.walls[1].a.x).toBe(240);
+  });
+  test("clear interior edits move the partition and attached branches while keeping the opposite outer wall fixed", () => {
+    const p = rectangle(); p.walls.push(wall("partition", { x: 120, y: 0 }, { x: 120, y: 180 }, "interior"), wall("branch", { x: 120, y: 90 }, { x: 240, y: 90 }, "interior"));
+    p.openings = [{ id: "door", kind: "door", wallId: "partition", t: .25, width: 24, flip: false, hinge: "right" }];
+    const dim = automaticDimensions(p).find(d => d.roomId && Math.min(d.a.x, d.b.x) < 10 && Math.abs(d.a.y - 3) < .01 && Math.abs(d.b.y - 3) < .01 && d.value === 114)!;
+    const moved = editDimension(p, dim.id, 144);
+    expect(moved.walls.find(w => w.id === "partition")!.a).toEqual({ x: 150, y: 0 });
+    expect(moved.walls.find(w => w.id === "partition")!.b).toEqual({ x: 150, y: 180 });
+    expect(moved.walls.find(w => w.id === "branch")!.a).toEqual({ x: 150, y: 90 });
+    expect(moved.walls[1]).toEqual(p.walls[1]);
+    expect(moved.openings[0]).toMatchObject({ t: .25, width: 24, hinge: "right" });
+    expect(automaticDimensions(moved).find(d => d.id === dim.id)!.value).toBeCloseTo(144, 5);
+    expect(detectRooms(moved.walls)).toHaveLength(3);
+    const otherEnd = editDimension(p, dim.id, 144, "end");
+    expect(otherEnd.walls.find(w => w.id === "partition")).toEqual(p.walls.find(w => w.id === "partition"));
+    expect(otherEnd.walls.find(w => w.id === "w3")!.a.x).toBe(-30);
+  });
+  test("bottom-face dimensions use the same left/right anchors and preserve attached wall segments", () => {
+    const p = rectangle();
+    const bottom = automaticDimensions(p).find(d => d.roomId && Math.abs(d.a.y - 177) < .01 && Math.abs(d.b.y - 177) < .01)!;
+    expect(dimensionEnds(bottom).start.x).toBe(3);
+    const moved = editDimension(p, bottom.id, 294);
+    expect(moved.walls[1].a.x).toBe(300);
+    expect(moved.walls[1].b.x).toBe(300);
+    expect(detectRooms(moved.walls)).toHaveLength(1);
+  });
+  test("jamb-offset edits reposition openings and adjoining wall spans keep the fixed jamb in place", () => {
+    const p = rectangle();
+    p.openings = [{ id: "door", wallId: "w0", kind: "door", width: 36, t: .5, flip: true }];
+    const offset = editDimension(p, "exterior:side:north:segment:0", 120);
+    expect(offset.walls).toEqual(p.walls);
+    expect(offset.openings[0].t * 240).toBeCloseTo(138, 5);
+    const wallSpan = editDimension(p, "exterior:side:north:segment:2", 120);
+    expect(wallSpan.walls[1].a.x).toBe(258);
+    expect(wallSpan.openings[0].t * 258).toBeCloseTo(120, 5);
+    const width = editDimension(p, "exterior:side:north:segment:1", 48);
+    expect(width.openings[0]).toMatchObject({ width: 48, t: .525, flip: true });
+    expect(width.walls).toEqual(p.walls);
+  });
+  test("opening labels resize the gap and impossible edits preserve the entire source drawing", () => {
+    const p = rectangle();
+    p.openings = [{ id: "door", wallId: "w0", kind: "door", width: 36, t: .5, flip: true, hinge: "right" }];
+    const dim = automaticDimensions(p).find(d => d.doorway)!;
+    const before = JSON.stringify(p), moved = editDimension(p, dim.id, 42);
+    expect(moved.openings[0]).toMatchObject({ width: 42, t: .5125, flip: true, hinge: "right" });
+    const opposite = editDimension(p, dim.id, 42, "end");
+    expect(opposite.openings[0]).toMatchObject({ width: 42, t: .4875, flip: true, hinge: "right" });
+    // Canonical moving sides are independent of the host wall's drawing direction.
+    const reversed = { ...p, walls: p.walls.map(w => w.id === "w0" ? { ...w, a: w.b, b: w.a } : w) };
+    const reversedDim = automaticDimensions(reversed).find(d => d.doorway)!;
+    expect(editDimension(reversed, reversedDim.id, 42).openings[0].t).toBeCloseTo(.4875, 5);
+    expect(() => editDimension(p, dim.id, 239)).toThrow();
+    expect(() => editDimension(p, "exterior:side:north:overall", 20)).toThrow();
+    expect(JSON.stringify(p)).toBe(before);
+  });
+  test("angled room dimensions move their boundary and regenerate exact clear measurements", () => {
+    const p = rectangle(), angle = Math.PI / 6;
+    const rotate = (point: Point) => ({ x: point.x * Math.cos(angle) - point.y * Math.sin(angle), y: point.x * Math.sin(angle) + point.y * Math.cos(angle) });
+    p.walls = p.walls.map(w => ({ ...w, a: rotate(w.a), b: rotate(w.b) }));
+    const dim = automaticDimensions(p).find(d => d.roomId && Math.abs(d.value - 234) < .01)!;
+    const moved = editDimension(p, dim.id, 270);
+    expect(automaticDimensions(moved).find(d => d.id === dim.id)!.value).toBeCloseTo(270, 2);
+    expect(detectRooms(moved.walls)).toHaveLength(1);
+    const triangle = blankPlan();
+    triangle.walls = [wall("a", { x: 0, y: 0 }, { x: 240, y: 0 }), wall("b", { x: 240, y: 0 }, { x: 120, y: 180 }), wall("c", { x: 120, y: 180 }, { x: 0, y: 0 })];
+    const clear = automaticDimensions(triangle).find(d => d.roomId && Math.abs(d.a.y - d.b.y) < .01)!;
+    const resized = editDimension(triangle, clear.id, clear.value + 36);
+    expect(automaticDimensions(resized).find(d => d.id === clear.id)!.value).toBeCloseTo(clear.value + 36, 2);
+    expect(detectRooms(resized.walls)).toHaveLength(1);
+  });
+  test("open walls and their attached T junctions stay connected when their dimension is resized", () => {
+    const p = blankPlan(); p.walls = [wall("host", { x: 0, y: 0 }, { x: 120, y: 120 }, "interior"), wall("branch", { x: 60, y: 60 }, { x: 120, y: 0 }, "interior")];
+    const dim = automaticDimensions(p).find(d => d.id === "wall:host:segment:1")!;
+    const moved = editDimension(p, dim.id, dim.value + 24);
+    expect(moved.walls[0].b.x).toBeGreaterThan(120);
+    expect(moved.walls[1].a).toEqual({ x: 60, y: 60 });
+    expect(automaticDimensions(moved).find(d => d.id === dim.id)!.value).toBeCloseTo(dim.value + 24, 2);
+  });
+  test("every visible sample measurement can be edited from either fixed end without changing furniture", () => {
+    const p = starterPlan();
+    for (const dim of automaticDimensions(p).filter(d => !d.hideLabel)) for (const fixed of ["start", "end"] as const) {
+      const updated = editDimension(p, dim.id, dim.value + 6, fixed);
+      expect(automaticDimensions(updated).find(d => d.id === dim.id)!.value).toBeCloseTo(dim.value + 6, 2);
+      expect(updated.fixtures).toEqual(p.fixtures);
+      expect(detectRooms(updated.walls)).toHaveLength(4);
+    }
   });
 });
 

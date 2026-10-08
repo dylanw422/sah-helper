@@ -52,7 +52,15 @@ try {
         && Math.abs(center[0] - (line[0][0] + line[1][0]) / 2) < 1e-8 && Math.abs(center[1] - (line[0][1] + line[1][1]) / 2) < 1e-8;
     });
   };
-  const interiorArtwork = () => page.locator('[data-room-dimension]').evaluateAll(elements => elements.map(el => el.outerHTML));
+  const interiorArtwork = () => page.locator('[data-room-dimension]').evaluateAll(elements => elements.map(el => {
+    const copy = el.cloneNode(true);
+    for (const node of [copy, ...copy.querySelectorAll("*")]) {
+      const attributes = [...node.attributes].map(a => [a.name, a.value]).sort(([a], [b]) => a.localeCompare(b));
+      for (const [name] of attributes) node.removeAttribute(name);
+      for (const [name, value] of attributes) node.setAttribute(name, value);
+    }
+    return copy.outerHTML;
+  }));
   const saved = async () => { await wait(); return page.evaluate(k => JSON.parse(localStorage.getItem(k)).plans[0], key); };
   const world = async (x, y) => page.locator('[data-layer="walls"]').evaluate((el, p) => {
     const group = el.closest('svg').querySelector('g[transform^="translate("]');
@@ -129,6 +137,69 @@ try {
   await find("Interior wall").first().click();
   await click(180, 0); await click(180, 240); await page.keyboard.press("Escape");
   await check(Promise.resolve(await page.locator('[data-layer="rooms"] polygon').count() === 2), "interior partition generates two rooms");
+  const originalWalls = (await saved()).walls;
+  const applyDimension = async (label, input, fixed) => {
+    await label.click();
+    await page.getByRole("textbox", { name: "New dimension", exact: true }).fill(input);
+    if (fixed) await find(fixed === "end" ? "Move left end" : "Move right end").click();
+    await page.getByRole("textbox", { name: "New dimension", exact: true }).press("Enter");
+    await page.locator(".fp-dimension-editor").waitFor({ state: "hidden" });
+  };
+  const northTotal = () => page.locator('[data-dimension="exterior:side:north:overall"] [data-edit-dimension]');
+  await northTotal().click();
+  await check(Promise.resolve(await page.getByRole("dialog").count() === 0 && await page.getByRole("textbox", { name: "New dimension", exact: true }).evaluate(el => document.activeElement === el && el.selectionEnd === el.value.length && el.selectionStart === 0)), "dimension editing opens an inline selected input without a modal or backdrop");
+  await check(page.locator(".fp-dimension-editor").evaluate(el => {
+    const label = document.querySelector('[data-dimension="exterior:side:north:overall"] [data-edit-dimension]').getBoundingClientRect(), box = el.getBoundingClientRect();
+    return Math.abs(box.x + box.width / 2 - label.x - label.width / 2) < 3 && Math.abs(box.y - label.y) < 24;
+  }), "inline input sits directly over the clicked measurement");
+  await check(page.locator(".fp-dimension-editor").evaluate(el => {
+    const b = el.getBoundingClientRect();
+    return b.width <= 190 && b.height <= 38 && el.querySelectorAll("button").length === 2 && !el.querySelector("select") && !el.querySelector('button[type="submit"]');
+  }), "dimension editor is only a small input between two arrows with no dropdown or confirm/cancel buttons");
+  await check(Promise.resolve(await find("Move right end").getAttribute("aria-pressed") === "true" && await find("Move left end").getAttribute("aria-pressed") === "false"), "highlighted right arrow identifies the end that moves by default");
+  await find("Move left end").click();
+  await check(Promise.resolve(await find("Move left end").getAttribute("aria-pressed") === "true" && await find("Move right end").getAttribute("aria-pressed") === "false" && await page.getByRole("textbox", { name: "New dimension", exact: true }).evaluate(el => document.activeElement === el)), "arrow toggle highlights the moving left end and keeps typing focus in the input");
+  await find("Move right end").click();
+  await page.mouse.move(1000, 260); await page.mouse.wheel(0, -100);
+  await page.waitForTimeout(150);
+  await check(page.locator(".fp-dimension-editor").evaluate(el => {
+    const label = document.querySelector('[data-dimension="exterior:side:north:overall"] [data-edit-dimension]').getBoundingClientRect(), box = el.getBoundingClientRect();
+    return Math.abs(box.x + box.width / 2 - label.x - label.width / 2) < 3 && Math.abs(box.y - label.y) < 24;
+  }), "inline dimension input follows its measurement when zooming the drawing");
+  await page.getByRole("textbox", { name: "New dimension", exact: true }).fill("32");
+  await page.screenshot({ path: resolve(output, "edit-dimension-inline.png"), fullPage: true });
+  await page.getByRole("textbox", { name: "New dimension", exact: true }).press("Enter");
+  await page.locator(".fp-dimension-editor").waitFor({ state: "hidden" });
+  let resized = await saved();
+  await check(Promise.resolve(resized.walls[1].a.x === 384 && resized.walls[1].b.x === 384 && resized.walls[2].a.x === 384 && resized.walls[4].a.x === 180 && await page.locator('[data-layer="rooms"] polygon').count() === 2), "an unmarked exterior dimension defaults to feet and moves the connected end wall and corners");
+  await check(page.locator('[data-layer="roof"] polygon').evaluate(el => el.getAttribute("points").split(" ").some(point => Math.abs(Number(point.split(",")[0]) - 405) < .01)), "roof lines regenerate to the edited house width");
+  await history(false); await history(true);
+  await check(Promise.resolve((await saved()).walls[1].a.x === 384), "dimension edits undo and redo as one connected wall change");
+  await history(false);
+  await northTotal().click();
+  await page.getByRole("textbox", { name: "New dimension", exact: true }).fill("999");
+  await page.keyboard.press("Escape");
+  await check(Promise.resolve(await page.locator(".fp-dimension-editor").count() === 0 && isDeepStrictEqual((await saved()).walls, originalWalls)), "Escape cancels inline edits and leaves the connected walls unchanged");
+  await northTotal().click();
+  await page.getByRole("textbox", { name: "New dimension", exact: true }).fill("999");
+  await click(40, 60);
+  await check(Promise.resolve(await page.locator(".fp-dimension-editor").count() === 0 && isDeepStrictEqual((await saved()).walls, originalWalls)), "clicking back into the drawing cancels unsubmitted input and selects normally");
+  const westRoomId = await page.locator('[data-layer="rooms"] polygon').evaluateAll(elements => elements.find(el => el.getAttribute("points").startsWith("3.000,3.000"))?.dataset.id);
+  const insideWidth = () => page.locator(`[data-room-dimension="${westRoomId}"] [data-edit-dimension]`).filter({ hasText: "14′ 6¾″" }).first();
+  await applyDimension(insideWidth(), '186.75"');
+  resized = await saved();
+  await check(Promise.resolve(resized.walls[4].a.x === 192 && resized.walls[4].b.x === 192 && isDeepStrictEqual(resized.walls.slice(0, 4), originalWalls.slice(0, 4))), "clicking an interior dimension accepts decimal inches and moves the partition with both ends attached");
+  await history(false);
+  await applyDimension(insideWidth(), '15\' 6 3/4"', "end");
+  resized = await saved();
+  await check(Promise.resolve(resized.walls[3].a.x === -12 && resized.walls[3].b.x === -12 && resized.walls[4].a.x === 180), "fractional feet/inches and the left arrow move the left wall");
+  await history(false);
+  await insideWidth().click();
+  await page.getByRole("textbox", { name: "New dimension", exact: true }).fill("bad input"); await page.getByRole("textbox", { name: "New dimension", exact: true }).press("Enter");
+  await check(Promise.resolve((await page.locator(".fp-dimension-editor").textContent()).includes("Enter feet") && isDeepStrictEqual((await saved()).walls, originalWalls)), "invalid dimension input leaves the drawing unchanged and reports how to enter lengths");
+  await page.getByRole("textbox", { name: "New dimension", exact: true }).fill('400"'); await page.getByRole("textbox", { name: "New dimension", exact: true }).press("Enter");
+  await check(Promise.resolve(await page.locator(".fp-form-error").count() === 1 && isDeepStrictEqual((await saved()).walls, originalWalls)), "an edit that would cross a room is rejected without disconnecting the drawing");
+  await page.getByRole("textbox", { name: "New dimension", exact: true }).press("Escape");
   await click(60, 100);
   await page.getByRole("textbox", { name: "Room name" }).fill("Living room");
   await page.getByRole("textbox", { name: "Room name" }).press("Tab");
@@ -142,7 +213,15 @@ try {
   await check(Promise.resolve((await saved()).openings.length === 2), "overlapping openings are rejected");
   await check(Promise.resolve(await find("Flip hinge side").count() === 0), "window properties do not show door hinge controls");
   await page.keyboard.press("Escape");
-  await click(90, 240);
+  await applyDimension(page.locator('[data-doorway-dimension] [data-edit-dimension]').first(), '3\' 6"');
+  await check(Promise.resolve((await saved()).openings.find(o => o.kind === "door").width === 42 && (await saved()).openings.find(o => o.kind === "door").flip === false && Math.abs(360 - (await saved()).openings.find(o => o.kind === "door").t * 360 - 93) < .01), "clicking the doorway width moves the selected jamb and keeps the door orientation");
+  await history(false);
+  await page.locator('[data-doorway-dimension] [data-edit-dimension]').first().click();
+  await find("Move left end").click();
+  await page.getByRole("textbox", { name: "New dimension", exact: true }).fill('20\''); await page.getByRole("textbox", { name: "New dimension", exact: true }).press("Enter");
+  await check(Promise.resolve(await page.locator(".fp-form-error").count() === 1 && (await saved()).openings.find(o => o.kind === "door").width === 36), "a doorway dimension cannot move the gap beyond its wall");
+  await page.getByRole("textbox", { name: "New dimension", exact: true }).press("Escape");
+  await click(108, 208);
   const hingeToggle = find("Flip hinge side");
   await check(Promise.resolve(await hingeToggle.getAttribute("aria-pressed") === "false"), "new doors start with a left hinge and expose the flip hinge button");
   await check(page.locator(".fp-door-controls").evaluate(el => {
@@ -377,6 +456,10 @@ try {
   await check(Promise.resolve((await serverSaved()).records[0].summary.revision === 2), "linked edits autosave to the client with an updated revision");
   await page.reload(); await page.locator(".fp-client-badge").waitFor();
   await check(Promise.resolve((await page.locator(".fp-client-badge").textContent()).includes("Morgan New Client")), "reload restores the client association");
+  await applyDimension(northTotal(), '31\' 0"');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("sah-helper:floor-plan-test-server")).records[0].plan.walls[0].b.x === 372);
+  await page.reload(); await page.locator(".fp-client-badge").waitFor();
+  await check(Promise.resolve((await saved()).walls[0].b.x === 372 && (await serverSaved()).records[0].plan.walls[0].b.x === 372), "edited dimensions autosave with the client and reopen with the resized walls");
   await find("Change plan client").click();
   await page.getByRole("combobox", { name: "Save plan to client" }).selectOption("client-alex");
   await find("Save plan to client").click();
@@ -495,6 +578,23 @@ try {
         return b.width > 0 && b.left >= 0 && b.right <= window.innerWidth && b.top >= box.top && b.bottom <= box.bottom;
       }) && document.documentElement.scrollWidth <= window.innerWidth && document.documentElement.scrollHeight <= window.innerHeight;
     }), `Home and plan actions fit one toolbar across the full ${viewport.width}×${viewport.height} viewport`);
+    await mobilePage.getByRole("button", { name: "Fit plan to view", exact: true }).click();
+    // Keyboard activation also works when a dimension is densely packed on a small screen.
+    const dimensionLabel = mobilePage.locator('[data-edit-dimension]').first();
+    await dimensionLabel.focus(); await dimensionLabel.press("Enter");
+    await mobilePage.getByRole("textbox", { name: "New dimension", exact: true }).waitFor();
+    await check(mobilePage.locator(".fp-dimension-editor").evaluate(el => {
+      const b = el.getBoundingClientRect(), canvas = document.querySelector(".fp-canvas").getBoundingClientRect();
+      return b.left >= canvas.left && b.right <= canvas.right && b.top >= canvas.top && b.bottom <= canvas.bottom && !document.querySelector('[role="dialog"]');
+    }), `inline dimension editor stays inside the drawing at ${viewport.width}×${viewport.height}`);
+    await mobilePage.getByRole("textbox", { name: "New dimension", exact: true }).fill("invalid");
+    await mobilePage.getByRole("textbox", { name: "New dimension", exact: true }).press("Enter");
+    await check(mobilePage.locator(".fp-dimension-editor").evaluate(el => {
+      const b = el.getBoundingClientRect(), canvas = document.querySelector(".fp-canvas").getBoundingClientRect();
+      return !!el.querySelector('[role="alert"]') && b.left >= canvas.left && b.right <= canvas.right && b.top >= canvas.top && b.bottom <= canvas.bottom;
+    }), `inline errors remain visible inside the drawing at ${viewport.width}×${viewport.height}`);
+    if (viewport.width === 320) await mobilePage.screenshot({ path: resolve(output, "mobile-inline-dimension.png"), fullPage: true });
+    await mobilePage.getByRole("textbox", { name: "New dimension", exact: true }).press("Escape");
   }
   await mobilePage.getByRole("button", { name: "Home", exact: true }).click();
   await mobilePage.getByRole("dialog", { name: "Exit floor plan editor?" }).waitFor();

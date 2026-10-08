@@ -28,7 +28,7 @@ function labelPosition(room: Room, obstacles: ReturnType<typeof bounds>[], width
   return best;
 }
 
-function DimensionMark({ dim, fontSize, dark, monochrome }: { dim: Dimension; fontSize: number; dark: boolean; monochrome: boolean }) {
+function DimensionMark({ dim, fontSize, dark, monochrome, scale, onEdit }: { dim: Dimension; fontSize: number; dark: boolean; monochrome: boolean; scale: number; onEdit?: (id: string) => void }) {
   const paint = artworkPalette(dark, monochrome);
   const length = distance(dim.a, dim.b);
   if (length < 0.5) return null;
@@ -38,10 +38,15 @@ function DimensionMark({ dim, fontSize, dark, monochrome }: { dim: Dimension; fo
   if (angle > 90 || angle < -90) angle += 180;
   const mid = lerp(a, b, 0.5), label = formatLength(dim.value);
   const labelFontSize = dim.doorway ? Math.min(fontSize, Math.max(1, length - 4) / (label.length * 0.62)) : fontSize;
+  const hitWidth = Math.max(label.length * labelFontSize * 0.7 + 8 / scale, 28 / scale), hitHeight = Math.max(labelFontSize * 1.8, 22 / scale);
+  const hitTop = (dim.interior ? 0 : -4) - hitHeight / 2;
+  const activate = (e: React.PointerEvent<SVGElement>) => { e.preventDefault(); e.stopPropagation(); onEdit?.(dim.id); };
   return <g className="fp-dimension" fill="none" stroke={dim.overall ? paint("#c5c9dc", "#345955") : paint("#a1a6bc", "#6d827e")} strokeWidth="0.6" pointerEvents="none" data-dimension={dim.id} data-room-dimension={dim.roomId} data-opening-dimension={dim.openingId} data-doorway-dimension={dim.doorway ? dim.openingId : undefined}>
     <path d={dim.doorway ? `M${a.x},${a.y}L${b.x},${b.y}` : `M${dim.a.x + nx * (dim.roomId ? 2 : 8)},${dim.a.y + ny * (dim.roomId ? 2 : 8)}L${a.x + nx * 4},${a.y + ny * 4}M${dim.b.x + nx * (dim.roomId ? 2 : 8)},${dim.b.y + ny * (dim.roomId ? 2 : 8)}L${b.x + nx * 4},${b.y + ny * 4}M${a.x},${a.y}L${b.x},${b.y}`} />
     {[a, b].map((p, i) => <path key={i} d={`M${p.x - 2},${p.y + 2}L${p.x + 2},${p.y - 2}`} strokeWidth="1.2" />)}
-    {!dim.hideLabel ? <g transform={`translate(${mid.x} ${mid.y}) rotate(${angle})`} textAnchor="middle" fontFamily="monospace" fill={paint("#c9ccda", "#34564e")} stroke={paint("#1c1e25", "#fafbf7", "#fff")} strokeWidth="3" paintOrder="stroke">
+    {onEdit && !dim.hideLabel ? <path d={`M${a.x},${a.y}L${b.x},${b.y}`} stroke="transparent" strokeWidth={10 / scale} pointerEvents="stroke" style={{ cursor: "pointer" }} onPointerDown={activate} /> : null}
+    {!dim.hideLabel ? <g transform={`translate(${mid.x} ${mid.y}) rotate(${angle})`} textAnchor="middle" fontFamily="monospace" fill={paint("#c9ccda", "#34564e")} stroke={paint("#1c1e25", "#fafbf7", "#fff")} strokeWidth="3" paintOrder="stroke" pointerEvents={onEdit ? "all" : "none"} data-edit-dimension={onEdit ? dim.id : undefined} role={onEdit ? "button" : undefined} tabIndex={onEdit ? 0 : undefined} aria-label={onEdit ? `Edit dimension ${label}` : undefined} style={onEdit ? { cursor: "pointer" } : undefined} onPointerDown={onEdit ? activate : undefined} onKeyDown={onEdit ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onEdit(dim.id); } } : undefined}>
+      {onEdit ? <path d={`M${-hitWidth / 2} ${hitTop}h${hitWidth}v${hitHeight}h${-hitWidth}Z`} fill="transparent" stroke="none" /> : null}
       <text y={dim.interior ? 0 : -4} dominantBaseline={dim.interior ? "central" : undefined} fontSize={labelFontSize} fontWeight={dim.overall ? 600 : 400}>{label}</text>
     </g> : null}
   </g>;
@@ -58,8 +63,8 @@ export function PlanDefs({ prefix, dark = false, monochrome = false }: { prefix:
   </defs>;
 }
 
-export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, scale = 1, prefix = "plan", rooms: suppliedRooms, theme = "paper" }: {
-  plan: Plan; layers: Layers; selection?: Selection | null; scale?: number; prefix?: string; rooms?: Room[]; theme?: "paper" | "dark" | "monochrome";
+export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, scale = 1, prefix = "plan", rooms: suppliedRooms, theme = "paper", onDimensionEdit }: {
+  plan: Plan; layers: Layers; selection?: Selection | null; scale?: number; prefix?: string; rooms?: Room[]; theme?: "paper" | "dark" | "monochrome"; onDimensionEdit?: (id: string) => void;
 }) {
   const dark = theme === "dark", monochrome = theme === "monochrome";
   const paint = artworkPalette(dark, monochrome);
@@ -134,7 +139,7 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
         {rows.map((row, index) => <text key={index} y={(index - (rows.length - 1) / 2) * fontSize * 1.45 + fontSize * 0.35} fontSize={fontSize * (index === 0 ? 1.13 : index === 1 ? 0.9 : 0.82)} fontWeight={index === 0 ? 600 : undefined}>{row}</text>)}
       </g>;
     })}</g> : null}
-    {layers.dimensions ? <g data-layer="dimensions">{dims.map(dim => <DimensionMark key={dim.id} dim={dim} dark={dark} monochrome={monochrome} fontSize={fontSize * (dim.overall ? 1.3 : 1.1)} />)}</g> : null}
+    {layers.dimensions ? <g data-layer="dimensions">{dims.map(dim => <DimensionMark key={dim.id} dim={dim} dark={dark} monochrome={monochrome} fontSize={fontSize * (dim.overall ? 1.3 : 1.1)} scale={scale} onEdit={onDimensionEdit} />)}</g> : null}
     {layers.notes ? <g data-layer="notes">{plan.notes.map(note => {
       const layout = noteLayout(note), active = selected("text", note.id);
       return <g key={note.id} data-kind="text" data-id={note.id} transform={`translate(${note.x} ${note.y})`}>

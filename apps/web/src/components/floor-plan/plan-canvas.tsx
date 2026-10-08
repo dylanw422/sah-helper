@@ -3,16 +3,19 @@
 import { Maximize, Minus, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
+import { automaticDimensions, type Dimension } from "@/lib/floor-plan/dimensions";
+import { dimensionEnds, type FixedDimensionEnd } from "@/lib/floor-plan/edit-dimension";
 import { distance, fitOpening, fixtureCorners, lerp, moveWallPoint, normalizeOpenings, planBounds, polygonString, project, samePoint, snapPoint } from "@/lib/floor-plan/geometry";
 import { formatLength, id, type Layers, type Plan, type Point, type Selection, type Tool, type Utility, type Wall } from "@/lib/floor-plan/model";
 import { FixtureSymbol } from "./fixture-symbol";
+import { DimensionInlineEditor } from "./dimension-inline-editor";
 import { PlanArtwork, UTILITY_COLORS } from "./plan-artwork";
 
 type View = { x: number; y: number; zoom: number };
 type Drag = { pointerId: number; start: Point; screen: Point; snapshot: Plan; selection: Selection; end?: "a" | "b"; moved: boolean };
 export type DrawSettings = { grid: number; snap: boolean; orthogonal: boolean; exteriorThickness: number; interiorThickness: number; doorWidth: number; windowWidth: number; length: number };
 export const TOOL_HINTS: Record<Tool, string> = {
-  select: "Select a wall, room, object, or note · Drag to move · R to rotate objects",
+  select: "Click a dimension to resize · Select or drag walls, objects, and notes",
   pan: "Drag to move around the drawing · Scroll to zoom",
   exterior: "Click corners or drag a wall · Esc ends the chain · Shift allows angles",
   interior: "Click corners or drag a wall · Snap to exterior walls to create rooms",
@@ -28,9 +31,9 @@ export const TOOL_HINTS: Record<Tool, string> = {
 };
 const isEditable = (target: EventTarget | null) => target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable);
 
-export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId, placementRotation, commit, select, error, onZoom, onTextPlaced }: {
+export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId, placementRotation, commit, select, error, onZoom, onTextPlaced, onDimensionApply, dimensionEditingAllowed }: {
   plan: Plan; tool: Tool; settings: DrawSettings; layers: Layers; selection: Selection | null; catalogId: string; placementRotation: number;
-  commit: (plan: Plan) => void; select: (s: Selection | null) => void; error: (message: string) => void; onZoom: (zoom: number) => void; onTextPlaced: () => void;
+  commit: (plan: Plan) => void; select: (s: Selection | null) => void; error: (message: string) => void; onZoom: (zoom: number) => void; onTextPlaced: () => void; onDimensionApply: (id: string, inches: number, fixedEnd: FixedDimensionEnd) => void; dimensionEditingAllowed: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -38,6 +41,13 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
   const viewRef = useRef(view); viewRef.current = view;
   const [origin, setOrigin] = useState<Point | null>(null), [hover, setHover] = useState<Point | null>(null);
   const [preview, setPreview] = useState<Plan | null>(null), [spacePan, setSpacePan] = useState(false);
+  const [editingDimension, setEditingDimension] = useState<Dimension | null>(null), [fixedEnd, setFixedEnd] = useState<FixedDimensionEnd>("start");
+  const cancelDimension = useCallback((restoreFocus = false) => { setEditingDimension(null); if (restoreFocus) svgRef.current?.focus(); }, []);
+  useEffect(() => { setEditingDimension(null); }, [plan.walls, plan.openings, tool, layers.dimensions, dimensionEditingAllowed]);
+  const startDimensionEdit = (id: string) => {
+    const dim = automaticDimensions(plan).find(d => d.id === id);
+    if (dim) { select(null); setFixedEnd("start"); setEditingDimension(dim); }
+  };
   const drag = useRef<Drag | null>(null), pan = useRef<{ screen: Point; view: View; pointerId: number } | null>(null);
   const drawPress = useRef<{ point: Point; screen: Point; pointerId: number } | null>(null);
   const fitted = useRef(false);
@@ -222,6 +232,14 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
   const rectangle = origin && hover ? [{ x: origin.x, y: origin.y }, { x: hover.x, y: origin.y }, { x: hover.x, y: hover.y }, { x: origin.x, y: hover.y }] : [];
   const lineTool = ["exterior", "interior", "electrical", "cold", "hot", "drain"].includes(tool);
   const cursor = spacePan || tool === "pan" ? "grab" : tool === "select" ? "default" : "crosshair";
+  const dimensionLine = editingDimension ? (() => {
+    const d = editingDimension, length = distance(d.a, d.b);
+    const offset = { x: -(d.b.y - d.a.y) / length * d.offset, y: (d.b.x - d.a.x) / length * d.offset };
+    const a = { x: d.a.x + offset.x, y: d.a.y + offset.y }, b = { x: d.b.x + offset.x, y: d.b.y + offset.y };
+    const ends = dimensionEnds({ ...d, a, b });
+    const mid = lerp(a, b, 0.5);
+    return { a, b, moving: ends[fixedEnd === "start" ? "end" : "start"], mid };
+  })() : null;
   const horizontalRuler = useMemo(() => {
     const step = view.zoom > 1 ? 24 : view.zoom > 0.4 ? 48 : 120;
     const start = Math.floor(-view.x / view.zoom / step) * step;
@@ -237,7 +255,8 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
       <g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
         {layers.grid ? <rect x={-view.x / view.zoom} y={-view.y / view.zoom} width={size.width / view.zoom} height={size.height / view.zoom} fill="url(#draft-major)" /> : null}
         {!plan.walls.length && !plan.fixtures.length && !plan.notes.length ? <g pointerEvents="none" transform={`translate(${size.width / 2 / view.zoom - view.x / view.zoom} ${size.height / 2 / view.zoom - view.y / view.zoom})`} textAnchor="middle" fill="#a1a6bc"><text y={-24 / view.zoom} fontSize={23 / view.zoom} fontFamily="sans-serif">A home starts with a line.</text><text y={5 / view.zoom} fontSize={12 / view.zoom}>Choose Exterior wall or Rectangle to start drawing.</text><path d={`M${-12 / view.zoom},${35 / view.zoom}H${12 / view.zoom}M0,${23 / view.zoom}V${47 / view.zoom}`} stroke="#555c73" strokeWidth={1 / view.zoom} /></g> : null}
-        <PlanArtwork theme="dark" plan={displayPlan} layers={layers} selection={selection} scale={view.zoom} />
+        <PlanArtwork theme="dark" plan={displayPlan} layers={layers} selection={selection} scale={view.zoom} onDimensionEdit={tool === "select" && !spacePan && dimensionEditingAllowed ? startDimensionEdit : undefined} />
+        {dimensionLine ? <g pointerEvents="none" stroke="#a5a7fa" fill="#14151b" strokeWidth={1.5 / view.zoom} data-dimension-edit-guide="true"><path d={`M${dimensionLine.a.x},${dimensionLine.a.y}L${dimensionLine.b.x},${dimensionLine.b.y}`} /><circle cx={dimensionLine.moving.x} cy={dimensionLine.moving.y} r={4 / view.zoom} /></g> : null}
         {hover && tool !== "select" && tool !== "pan" ? <g pointerEvents="none" stroke="#818cf8" fill="none" strokeWidth={1 / view.zoom}>
           {tool === "text" ? <g transform={`translate(${hover.x} ${hover.y})`} opacity="0.7"><rect width="144" height="28" strokeDasharray="4 2" /><text x="8" y="16" fontFamily="monospace" fontSize="8" stroke="none" fill="#818cf8">Construction note</text></g> : null}
           {origin && lineTool ? <><path d={`M${origin.x},${origin.y}L${hover.x},${hover.y}`} strokeWidth={tool === "exterior" ? settings.exteriorThickness : tool === "interior" ? settings.interiorThickness : 1.5 / view.zoom} stroke={lineTool && tool in UTILITY_COLORS ? UTILITY_COLORS[tool as Utility["kind"]] : "#818cf8"} strokeOpacity="0.6" /><g transform={`translate(${(origin.x + hover.x) / 2} ${(origin.y + hover.y) / 2 - 12 / view.zoom})`}><rect x={-50 / view.zoom} y={-14 / view.zoom} width={100 / view.zoom} height={21 / view.zoom} rx={4 / view.zoom} fill="#37395e" stroke="none" /><text textAnchor="middle" fontSize={11 / view.zoom} fill="white" stroke="none" fontFamily="monospace">{formatLength(distance(origin, hover))}</text></g></> : null}
@@ -248,6 +267,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, catalogId,
       </g>
       <g pointerEvents="none"><rect width={size.width} height="22" fill="#18191f" /><path d={`M0 22H${size.width}`} stroke="#343743" />{horizontalRuler.map(x => <g key={x} transform={`translate(${view.x + x * view.zoom} 0)`}><path d="M0 16V22" stroke="#555c73" /><text x="4" y="12" fontSize="9" fontFamily="monospace" fill="#7d849c">{Math.round(x / 12)}′</text></g>)}</g>
     </svg>
+    {editingDimension && dimensionLine ? <DimensionInlineEditor key={editingDimension.id} dimension={editingDimension} fixed={fixedEnd} onFixedChange={setFixedEnd} size={size} anchor={{ x: view.x + dimensionLine.mid.x * view.zoom, y: view.y + dimensionLine.mid.y * view.zoom }} onCancel={cancelDimension} onApply={inches => { onDimensionApply(editingDimension.id, inches, fixedEnd); cancelDimension(true); }} /> : null}
     <div className="fp-canvas-label"><span className="fp-kicker">Drafting view</span><span>Level 1 <i /> inches / feet</span></div>
     <div className="fp-canvas-north" aria-label="North direction"><span>N</span><svg width="20" height="31" viewBox="0 0 20 31" aria-hidden="true"><path d="M10 0L17 20L10 16L3 20Z" fill="#939ab5" /><path d="M10 16V31" stroke="#939ab5" /></svg></div>
     <div className="fp-canvas-controls"><button aria-label="Fit plan to view" title="Fit plan to view" onClick={fit}><Maximize size={15} /></button><span /><button aria-label="Zoom out" onClick={() => zoomAt(1 / 1.2)}><Minus size={15} /></button><output aria-label="Zoom percentage">{Math.round(view.zoom * 100)}%</output><button aria-label="Zoom in" onClick={() => zoomAt(1.2)}><Plus size={15} /></button></div>

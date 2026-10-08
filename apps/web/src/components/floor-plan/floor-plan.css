@@ -155,6 +155,20 @@
 .fp-empty-properties p { color: var(--fp-muted); font-family: var(--font-geist-sans, "Helvetica Neue"), sans-serif; font-size: 16px; letter-spacing: -.025em; line-height: 1.4; }
 .fp-empty-properties small { margin-top: 12px; color: var(--fp-muted); font-size: 10px; line-height: 1.7; }
 .fp-properties { padding: 20px 16px; }
+.fp-studio .fp-dimension [data-edit-dimension]:hover text, .fp-studio .fp-dimension [data-edit-dimension]:focus text { fill: var(--fp-accent-text); }
+.fp-dimension-editor { position: absolute; z-index: 8; padding: 2px; border: 1px solid var(--fp-primary); border-radius: 4px; background: var(--fp-panel); box-shadow: 0 2px 8px rgb(0 0 0 / .25); }
+.fp-dimension-entry { display: flex; align-items: center; gap: 2px; }
+.fp-dimension-entry input { flex: 1; min-width: 0; height: 28px; padding: 0 3px; border: 0; border-radius: 2px; outline: none; background: var(--fp-background); color: var(--fp-foreground); font-family: var(--font-geist-mono), monospace; font-size: 13px; text-align: center; }
+.fp-dimension-entry input:focus { box-shadow: inset 0 -1px var(--fp-primary); }
+.fp-dimension-entry button { display: grid; place-items: center; width: 24px; height: 28px; flex-shrink: 0; border: 0; border-radius: 2px; background: transparent; color: var(--fp-muted); cursor: pointer; }
+.fp-dimension-entry button[aria-pressed="true"] { color: var(--fp-primary-foreground); background: var(--fp-primary); }
+.fp-dimension-entry button:hover { color: var(--fp-foreground); background: var(--fp-hover); }
+.fp-dimension-entry button[aria-pressed="true"]:hover { color: var(--fp-primary-foreground); background: var(--fp-primary); }
+.fp-dimension-editor .fp-form-error { margin: 6px 5px 3px; font-size: 10px; }
+@media (max-width: 780px) {
+  .fp-dimension-entry input { height: 36px; font-size: 16px; }
+  .fp-dimension-entry button { width: 28px; height: 36px; }
+}
 .fp-field > textarea { width: 100%; min-height: 112px; resize: vertical; padding: 9px; border: 1px solid var(--fp-border); border-radius: 4px; background: var(--fp-background); color: var(--fp-foreground); font: inherit; font-size: 11px; line-height: 1.6; }
 .fp-door-controls { display: grid; gap: 8px; margin-top: 12px; }
 .fp-properties-heading h3 { margin-top: 7px; color: var(--fp-secondary); font-size: 14px; font-weight: 500; }
