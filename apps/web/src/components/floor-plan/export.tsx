@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { PlanArtwork } from "./plan-artwork";
 import { printBounds, printLayout, type PdfScale } from "@/lib/floor-plan/print";
+import { detectRooms } from "@/lib/floor-plan/geometry";
 import type { Layers, Plan } from "@/lib/floor-plan/model";
 
 export function downloadFile(content: Blob, filename: string) {
@@ -46,6 +47,8 @@ export async function exportPdf(plan: Plan, layers: Layers, scale: PdfScale) {
     if (title !== pdfText(plan.name)) title += "...";
     page.drawText(title, { x: 36, y: layout.height - 35, size: 16, font: bold, color: rgb(0, 0, 0) });
     page.drawText(`SAH HELPER  /  FLOOR PLAN     Scale: ${layout.scaleLabel}     ${layout.name} ${layout.orientation}`, { x: 36, y: layout.height - 52, size: 9, font });
+    const totalArea = detectRooms(plan.walls).reduce((sum, room) => sum + room.area, 0);
+    page.drawText(`Total usable floor area: ${totalArea.toLocaleString("en-US", { maximumFractionDigits: 0 })} sq ft`, { x: 36, y: layout.height - 65, size: 9, font: bold });
     page.drawText("Print at 100% / Actual size. Disable scaling in the print dialog to preserve the scale above.", { x: 36, y: 28, size: 8, font });
     page.drawText("Wall dimensions are centerline; room dimensions are clear bounds.", { x: 36, y: 16, size: 8, font });
     pdf.setTitle(pdfText(plan.name));

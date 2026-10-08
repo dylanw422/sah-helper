@@ -13,6 +13,7 @@ import { deleteSelection, moveSelection, selectInBox, selectionBounds, visibleSe
 import { dimensionEnds, editDimension } from "../apps/web/src/lib/floor-plan/edit-dimension";
 import { snapFixtureToWalls } from "../apps/web/src/lib/floor-plan/fixture-snapping";
 import { CATALOG } from "../apps/web/src/lib/floor-plan/catalog";
+import { cabinetPlacementClear, snapCabinet } from "../apps/web/src/lib/floor-plan/cabinet-snapping";
 
 describe("client sync", () => {
   test("timestamps do not mark an unchanged or undone plan as dirty", () => {
@@ -215,6 +216,108 @@ describe("object snapping to wall faces", () => {
     expect(automaticDimensions(p)).toEqual(dimensions);
   });
 });
+describe("dynamic cabinet placement", () => {
+  const cabinet = { id: "new", catalogId: "cabinet", width: 24, depth: 24, x: 48, y: 15, rotation: 0 };
+  test("cabinet backs and sides align exactly despite the grid", () => {
+    const p = rectangle();
+    p.fixtures = [{ ...cabinet, id: "existing", x: 15, y: 15 }];
+    const before = JSON.stringify(p);
+    const fitted = snapCabinet({ ...cabinet, x: 42, y: 18 }, p, 8, { x: 42, y: 18 });
+    expect(fitted).toMatchObject({ x: 39, y: 15, width: 24, depth: 24 });
+    expect(cabinetPlacementClear(fitted, p)).toBe(true);
+    expect(JSON.stringify(p)).toBe(before);
+  });
+  test("ordinary wall snapping keeps the full depth instead of needlessly trimming it", () => {
+    const p = rectangle();
+    expect(snapCabinet({ ...cabinet, x: 60, y: 12 }, p, 5)).toMatchObject({ x: 60, y: 15, width: 24, depth: 24 });
+    p.fixtures = [{ ...cabinet, id: "left", x: 15 }, { ...cabinet, id: "stove", catalogId: "range", x: 84, y: 17, width: 30, depth: 28 }];
+    expect(snapCabinet({ ...cabinet, x: 42, y: 18 }, p, 4.5)).toMatchObject({ x: 39, y: 15, width: 24, depth: 24 });
+    expect(snapCabinet({ ...cabinet, x: 48, y: 18 }, p, 4.5)).toMatchObject({ x: 48, y: 15, width: 42, depth: 24 });
+  });
+  test("end cabinets shrink or expand to the remaining wall gap at any zoom", () => {
+    for (const width of [42, 60]) for (const tolerance of [2, 5, 14]) {
+      const p = rectangle(width, 120);
+      p.fixtures = [{ ...cabinet, id: "existing", x: 15 }];
+      const gap = width - 30;
+      const fitted = snapCabinet({ ...cabinet, x: 27 + gap / 2, y: 15 }, p, tolerance);
+      expect(fitted.width).toBe(gap);
+      expect(fitted.x - fitted.width / 2).toBe(27);
+      expect(fitted.x + fitted.width / 2).toBe(width - 3);
+      expect(cabinetPlacementClear(fitted, p)).toBe(true);
+    }
+  });
+  test("gaps between cabinets, stoves, refrigerators and walls use real footprints", () => {
+    for (const catalogId of ["cabinet", "range", "fridge"]) {
+      const p = rectangle(120, 120);
+      p.fixtures = [
+        { ...cabinet, id: "left", x: 15 },
+        { ...cabinet, id: "right", catalogId, x: 60, y: 21, width: 30, depth: 36 },
+      ];
+      const fitted = snapCabinet({ ...cabinet, x: 36, y: 18 }, p, 5);
+      expect(fitted).toMatchObject({ x: 36, y: 15, width: 18, depth: 24 });
+      expect(cabinetPlacementClear(fitted, p)).toBe(true);
+    }
+    const p = rectangle(60, 120);
+    p.fixtures = [{ ...cabinet, id: "fridge", catalogId: "fridge", width: 36, depth: 36, x: 39, y: 21 }];
+    expect(snapCabinet({ ...cabinet, x: 12, y: 15 }, p, 5)).toMatchObject({ x: 12, y: 15, width: 18 });
+  });
+  test("cabinet runs follow rotated walls and object faces", () => {
+    for (const angle of [Math.PI / 4, Math.PI / 2, Math.PI]) {
+      const rotate = (p: Point) => ({ x: 80 + p.x * Math.cos(angle) - p.y * Math.sin(angle), y: 60 + p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      const p = rectangle(42, 120);
+      p.walls = p.walls.map(w => ({ ...w, a: rotate(w.a), b: rotate(w.b) }));
+      p.fixtures = [{ ...cabinet, id: "existing", ...rotate({ x: 15, y: 15 }), rotation: angle * 180 / Math.PI }];
+      const fitted = snapCabinet({ ...cabinet, ...rotate({ x: 33, y: 15 }), rotation: angle * 180 / Math.PI }, p, 5);
+      const expected = rotate({ x: 33, y: 15 });
+      expect(fitted.x).toBeCloseTo(expected.x);
+      expect(fitted.y).toBeCloseTo(expected.y);
+      expect(fitted.width).toBeCloseTo(12);
+      expect(cabinetPlacementClear(fitted, p)).toBe(true);
+    }
+  });
+  test("shallow rooms fit both cabinet width and depth without crossing walls", () => {
+    const p = rectangle(24, 24), fitted = snapCabinet({ ...cabinet, x: 12, y: 12 }, p, 5);
+    expect(fitted).toMatchObject({ x: 12, y: 12, width: 18, depth: 18 });
+    expect(cabinetPlacementClear(fitted, p)).toBe(true);
+  });
+  test("partially overhanging placements trim to appliance and wall faces", () => {
+    const p = rectangle(240, 120);
+    p.fixtures = [{ ...cabinet, id: "stove", catalogId: "range", x: 75, y: 17, width: 30, depth: 28 }];
+    const besideStove = snapCabinet({ ...cabinet, x: 58, y: 15 }, p, 5);
+    expect(besideStove).toMatchObject({ x: 53, y: 15, width: 14, depth: 24 });
+    expect(cabinetPlacementClear(besideStove, p)).toBe(true);
+    const acrossWall = snapCabinet({ ...cabinet, x: 150, y: 4 }, p, 5);
+    expect(acrossWall).toMatchObject({ x: 150, y: 9.5, width: 24, depth: 13 });
+    expect(cabinetPlacementClear(acrossWall, p)).toBe(true);
+  });
+  test("larger appliance gaps can grow cabinets while open space retains the selected size", () => {
+    const p = rectangle(240, 120);
+    expect(snapCabinet({ ...cabinet, x: 120, y: 72 }, p, 5)).toMatchObject({ x: 120, y: 72, width: 24, depth: 24 });
+    p.fixtures = [{ ...cabinet, id: "left", x: 15 }, { ...cabinet, id: "fridge", catalogId: "fridge", x: 117, y: 21, width: 36, depth: 36 }];
+    const fitted = snapCabinet({ ...cabinet, x: 63, y: 15 }, p, 5);
+    expect(fitted).toMatchObject({ x: 63, y: 15, width: 72, depth: 24 });
+    expect(cabinetPlacementClear(fitted, p)).toBe(true);
+    const side = snapCabinet({ ...cabinet, x: 39, y: 15 }, p, 5);
+    expect(side).toMatchObject({ x: 39, y: 15, width: 24, depth: 24 });
+  });
+  test("openings do not create phantom cabinet boundaries and occupied positions stay invalid", () => {
+    const p = rectangle();
+    p.openings = [{ id: "gap", kind: "opening", wallId: "w3", t: .5, width: 60, flip: false }];
+    const free = snapCabinet({ ...cabinet, x: 0, y: 90 }, p, 5);
+    expect(free).toMatchObject({ x: 0, y: 90, width: 24, depth: 24 });
+    expect(cabinetPlacementClear(free, p)).toBe(true);
+    p.fixtures.push({ ...cabinet, id: "occupied", x: 72, y: 72, width: 72, depth: 72 });
+    expect(cabinetPlacementClear(snapCabinet({ ...cabinet, x: 72, y: 72 }, p, 5), p)).toBe(false);
+  });
+  test("dragged cabinets exclude their old footprint and legacy countertops remain cabinetry", () => {
+    const p = rectangle(60, 120);
+    p.fixtures = [{ ...cabinet, id: "existing", catalogId: "counter", x: 15 }, { ...cabinet, x: 90, y: 60 }];
+    const fitted = snapCabinet({ ...cabinet, x: 42 }, p, 5);
+    expect(fitted).toMatchObject({ x: 42, y: 15, width: 30 });
+    expect(cabinetPlacementClear(fitted, p)).toBe(true);
+  });
+});
+
 function rectangle(width = 240, height = 180) {
   const p = blankPlan("Test home");
   const corners = [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height }];

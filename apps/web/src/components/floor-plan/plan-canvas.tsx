@@ -10,6 +10,7 @@ import { distance, fitOpening, fixtureCorners, lerp, moveWallPoint, moveWalls, n
 import { formatLength, id, type Fixture, type Layers, type Plan, type Point, type Selection, type Tool, type Utility, type Wall } from "@/lib/floor-plan/model";
 import { mergeSelections, moveSelection, selectInBox, selectionBounds, selectionKey } from "@/lib/floor-plan/selection";
 import { snapFixtureToWalls } from "@/lib/floor-plan/fixture-snapping";
+import { cabinetPlacementClear, isCabinet, snapCabinet } from "@/lib/floor-plan/cabinet-snapping";
 import { FixtureSymbol } from "./fixture-symbol";
 import { DimensionInlineEditor } from "./dimension-inline-editor";
 import { PlanArtwork, UTILITY_COLORS } from "./plan-artwork";
@@ -45,7 +46,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [view, setView] = useState<View>({ x: 150, y: 120, zoom: 1 });
   const viewRef = useRef(view); viewRef.current = view;
-  const [origin, setOrigin] = useState<Point | null>(null), [hover, setHover] = useState<Point | null>(null);
+  const [origin, setOrigin] = useState<Point | null>(null), [hover, setHover] = useState<Point | Fixture | null>(null);
   const [preview, setPreview] = useState<Plan | null>(null), [spacePan, setSpacePan] = useState(false);
   const [editingDimension, setEditingDimension] = useState<Dimension | null>(null), [fixedEnd, setFixedEnd] = useState<FixedDimensionEnd>("start");
   const cancelDimension = useCallback((restoreFocus = false) => { setEditingDimension(null); if (restoreFocus) svgRef.current?.focus(); }, []);
@@ -125,6 +126,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
   const positionFixture = (fixture: Fixture, source = plan, fallback?: Point): Fixture => {
     if (!settings.snap) return fixture;
     const gridPosition = fallback ?? { x: Math.round(fixture.x / settings.grid) * settings.grid, y: Math.round(fixture.y / settings.grid) * settings.grid };
+    if (isCabinet(fixture)) return snapCabinet(fixture, source, 10 / view.zoom, gridPosition);
     return { ...fixture, ...snapFixtureToWalls(fixture, source, 10 / view.zoom, gridPosition) };
   };
   const finishSegment = (from: Point, to: Point) => {
@@ -183,6 +185,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
       const item = CATALOG_MAP.get(placementCatalogId); if (!item) return;
       if (plan.fixtures.length >= 1000) { error("This plan has reached the 1,000-object limit."); return; }
       const fixture = positionFixture({ id: id(), catalogId: placementCatalogId, x: world.x, y: world.y, width: item.width, depth: item.depth, rotation: placementRotation, ...(item.steps === undefined ? {} : { steps: item.steps }) });
+      if (settings.snap && isCabinet(fixture) && !cabinetPlacementClear(fixture, plan)) { error("There isn't enough clear space for a cabinet here. Place it beside an object or wall."); return; }
       commit({ ...plan, fixtures: [...plan.fixtures, fixture] }); select({ type: "fixture", id: fixture.id }); return;
     }
     if (tool === "door" || tool === "window" || tool === "opening") {
@@ -224,6 +227,8 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
       } else if (d.selection.type === "fixture") {
         const f = snapshot.fixtures.find(f => f.id === d.selection.id)!;
         const moved = positionFixture({ ...f, x: f.x + world.x - d.start.x, y: f.y + world.y - d.start.y }, snapshot, { x: f.x + delta.x, y: f.y + delta.y });
+        if (settings.snap && isCabinet(moved) && !cabinetPlacementClear(moved, snapshot)) { setPreview(null); d.error = "The cabinet needs clear space between walls and objects."; return; }
+        d.error = undefined;
         setPreview({ ...snapshot, fixtures: snapshot.fixtures.map(item => item.id === f.id ? moved : item) });
       } else if (d.selection.type === "text") {
         setPreview({ ...snapshot, notes: snapshot.notes.map(n => n.id === d.selection.id ? d.end ? { ...n, width: Math.max(48, Math.min(2400, n.width + delta.x)) } : { ...n, x: n.x + delta.x, y: n.y + delta.y } : n) });
@@ -268,6 +273,8 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
   const item = CATALOG_MAP.get(placementCatalogId);
+  const previewWidth = hover && "width" in hover ? hover.width : item?.width ?? 0;
+  const previewDepth = hover && "depth" in hover ? hover.depth : item?.depth ?? 0;
   const grid = settings.grid;
   const minor = grid * view.zoom >= 5 ? grid : grid * Math.ceil(5 / (grid * view.zoom));
   const major = Math.max(12, minor * Math.ceil(24 / minor));
@@ -306,7 +313,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
           {tool === "text" ? <g transform={`translate(${hover.x} ${hover.y})`} opacity="0.7"><rect width="144" height="28" strokeDasharray="4 2" /><text x="8" y="16" fontFamily="monospace" fontSize="8" stroke="none" fill="#818cf8">Construction note</text></g> : null}
           {origin && lineTool ? <><path d={`M${origin.x},${origin.y}L${hover.x},${hover.y}`} strokeWidth={tool === "exterior" ? settings.exteriorThickness : tool === "interior" ? settings.interiorThickness : 1.5 / view.zoom} stroke={lineTool && tool in UTILITY_COLORS ? UTILITY_COLORS[tool as Utility["kind"]] : "#818cf8"} strokeOpacity="0.6" /><g transform={`translate(${(origin.x + hover.x) / 2} ${(origin.y + hover.y) / 2 - 12 / view.zoom})`}><rect x={-50 / view.zoom} y={-14 / view.zoom} width={100 / view.zoom} height={21 / view.zoom} rx={4 / view.zoom} fill="#37395e" stroke="none" /><text textAnchor="middle" fontSize={11 / view.zoom} fill="white" stroke="none" fontFamily="monospace">{formatLength(distance(origin, hover))}</text></g></> : null}
           {origin && tool === "rectangle" ? <><polygon points={polygonString(rectangle)} fill="#818cf8" fillOpacity="0.07" strokeDasharray={`${6 / view.zoom} ${3 / view.zoom}`} strokeWidth={settings.exteriorThickness} /><text x={(origin.x + hover.x) / 2} y={(origin.y + hover.y) / 2} textAnchor="middle" fontSize={12 / view.zoom} fill="#818cf8" stroke="none">{formatLength(Math.abs(hover.x - origin.x))} × {formatLength(Math.abs(hover.y - origin.y))}</text></> : null}
-          {placingFixture && item ? <g data-fixture-preview="true" transform={`translate(${hover.x} ${hover.y}) rotate(${placementRotation})`}><polygon points={polygonString(fixtureCorners({ id: "preview", catalogId: placementCatalogId, x: 0, y: 0, width: item.width, depth: item.depth, rotation: 0 }))} strokeDasharray="3 2" /><g transform={`translate(${-item.width / 2} ${-item.depth / 2}) scale(${item.width / 100} ${item.depth / 100})`} color="#818cf8" opacity="0.5" strokeWidth="2"><FixtureSymbol symbol={item.symbol} steps={item.steps} dark /></g></g> : null}
+          {placingFixture && item ? <g data-fixture-preview="true" transform={`translate(${hover.x} ${hover.y}) rotate(${placementRotation})`}><polygon points={polygonString(fixtureCorners({ id: "preview", catalogId: placementCatalogId, x: 0, y: 0, width: previewWidth, depth: previewDepth, rotation: 0 }))} strokeDasharray="3 2" /><g transform={`translate(${-previewWidth / 2} ${-previewDepth / 2}) scale(${previewWidth / 100} ${previewDepth / 100})`} color="#818cf8" opacity="0.5" strokeWidth="2"><FixtureSymbol symbol={item.symbol} steps={item.steps} dark /></g></g> : null}
           <circle cx={hover.x} cy={hover.y} r={4 / view.zoom} fill="#14151b" /><path d={`M${hover.x - 9 / view.zoom},${hover.y}H${hover.x + 9 / view.zoom}M${hover.x},${hover.y - 9 / view.zoom}V${hover.y + 9 / view.zoom}`} />
         </g> : null}
       </g>

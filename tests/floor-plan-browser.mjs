@@ -171,6 +171,74 @@ try {
     { id: "bed", catalogId: "queen-bed", x: 240, y: 84, width: 60, depth: 80, rotation: 0 },
     { id: "toilet", catalogId: "toilet", x: 300, y: 156, width: 20, depth: 28, rotation: 0 },
   ], notes: [{ id: "note", x: 228, y: 174, width: 72, fontSize: 8, text: "Note", border: true }], utilities: [{ id: "run", kind: "cold", a: { x: 210, y: 54 }, b: { x: 294, y: 54 } }] };
+  const cabinetContext = await browser.newContext({ viewport: { width: 1560, height: 1040 } });
+  const cabinetPlan = { ...bulkPlan, id: "dynamic-cabinets", name: "Dynamic cabinets", rooms: {}, openings: [], notes: [], utilities: [], walls: [
+    { id: "north", a: { x: 0, y: 0 }, b: { x: 240, y: 0 }, kind: "exterior", thickness: 6 },
+    { id: "east", a: { x: 240, y: 0 }, b: { x: 240, y: 180 }, kind: "exterior", thickness: 6 },
+    { id: "south", a: { x: 240, y: 180 }, b: { x: 0, y: 180 }, kind: "exterior", thickness: 6 },
+    { id: "west", a: { x: 0, y: 180 }, b: { x: 0, y: 0 }, kind: "exterior", thickness: 6 },
+  ], fixtures: [
+    { id: "first", catalogId: "cabinet", x: 15, y: 15, width: 24, depth: 24, rotation: 0 },
+    { id: "stove", catalogId: "range", x: 84, y: 17, width: 30, depth: 28, rotation: 0 },
+    { id: "fridge", catalogId: "fridge", x: 177, y: 21, width: 36, depth: 36, rotation: 0 },
+    { id: "legacy", catalogId: "counter", x: 120, y: 90, width: 24, depth: 24, rotation: 0 },
+  ] };
+  await cabinetContext.addInitScript(({ key, plan }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 1, activeId: plan.id, plans: [plan] })); }, { key, plan: cabinetPlan });
+  const cabinetPage = await cabinetContext.newPage();
+  cabinetPage.on("pageerror", error => errors.push(error.message));
+  await cabinetPage.goto("http://127.0.0.1:4179"); await cabinetPage.getByRole("application").waitFor();
+  const cabinetButton = name => cabinetPage.getByRole("button", { name, exact: true });
+  const cabinetSaved = async () => { await cabinetPage.waitForTimeout(550); return cabinetPage.evaluate(k => JSON.parse(localStorage.getItem(k)).plans[0], key); };
+  const cabinetWorld = (x, y) => cabinetPage.locator('[data-layer="walls"]').evaluate((el, p) => new DOMPoint(p.x, p.y).matrixTransform(el.closest("svg").querySelector('g[transform^="translate("]').getScreenCTM()).toJSON(), { x, y });
+  const cabinetClick = async (x, y) => { const p = await cabinetWorld(x, y); await cabinetPage.mouse.click(p.x, p.y); };
+  const cabinetHistory = async redo => { await cabinetPage.getByRole("application").focus(); await cabinetPage.keyboard.press(redo ? "ControlOrMeta+Shift+z" : "ControlOrMeta+z"); };
+  await cabinetButton("Objects").click(); await cabinetButton("Kitchen").click();
+  await check(Promise.resolve(await cabinetButton("Place Cabinet").count() === 1 && await cabinetButton("Place Countertop").count() === 0 && await cabinetPage.locator('[data-id="legacy"] title').textContent() === "Cabinet"), "Cabinet replaces Countertop in the library while existing countertops remain editable cabinets");
+  await check(cabinetButton("Place Cabinet").evaluate(el => el.querySelector('path[d="M2 10H98"]') !== null), "Cabinet uses the overhead countertop design");
+  await cabinetButton("Place Cabinet").click(); await cabinetClick(42, 18);
+  let cabinetry = await cabinetSaved(), secondCabinet = cabinetry.fixtures.at(-1);
+  await check(Promise.resolve(secondCabinet.x === 39 && secondCabinet.y === 15 && secondCabinet.width === 24), "placing a cabinet snaps its back to the wall face and its side flush against the next cabinet");
+  const cabinetGapPoint = await cabinetWorld(60, 18); await cabinetPage.mouse.move(cabinetGapPoint.x, cabinetGapPoint.y);
+  await check(cabinetPage.locator('[data-fixture-preview] polygon').evaluate(el => {
+    const x = el.getAttribute("points").split(" ").map(p => Number(p.split(",")[0]));
+    return Math.max(...x) - Math.min(...x) === 18;
+  }), "cabinet placement preview shows the fitted eighteen-inch width between a cabinet and stove");
+  await cabinetPage.mouse.click(cabinetGapPoint.x, cabinetGapPoint.y);
+  await check(Promise.resolve((await cabinetSaved()).fixtures.at(-1).width === 18 && await cabinetPage.getByRole("spinbutton", { name: "Width", exact: true }).inputValue() === "18"), "the fitted cabinet width is committed and shown in Properties");
+  await cabinetHistory(false); await cabinetButton("Select").click();
+  const cabinetDragStart = await cabinetWorld(120, 90), cabinetDragEnd = await cabinetWorld(60, 15);
+  await cabinetPage.mouse.move(cabinetDragStart.x, cabinetDragStart.y); await cabinetPage.mouse.down(); await cabinetPage.mouse.move(cabinetDragEnd.x, cabinetDragEnd.y, { steps: 10 }); await cabinetPage.mouse.up();
+  let legacyCabinet = (await cabinetSaved()).fixtures.find(f => f.id === "legacy");
+  await check(Promise.resolve(legacyCabinet.width === 18 && legacyCabinet.x === 60 && legacyCabinet.y === 15), "dragging an existing cabinet also fits it between neighboring cabinets and appliances");
+  await cabinetHistory(false); legacyCabinet = (await cabinetSaved()).fixtures.find(f => f.id === "legacy");
+  await check(Promise.resolve(legacyCabinet.width === 24 && legacyCabinet.x === 120 && legacyCabinet.y === 90), "one undo restores the cabinet's previous position and size");
+  await cabinetHistory(true);
+  await cabinetButton("Place Cabinet").click();
+  for (const [x, expectedX, width] of [[110, 111, 24], [141, 141, 36], [216, 216, 42]]) {
+    await cabinetClick(x, 18);
+    const fitted = (await cabinetSaved()).fixtures.at(-1);
+    await check(Promise.resolve(fitted.x === expectedX && fitted.y === 15 && fitted.width === width), `cabinet at ${expectedX} inches fits its ${width}-inch span beside appliances or the end wall`);
+  }
+  cabinetry = await cabinetSaved();
+  await cabinetPage.reload(); await cabinetPage.getByRole("application").waitFor();
+  await check(Promise.resolve(isDeepStrictEqual((await cabinetSaved()).fixtures, cabinetry.fixtures)), "auto-fitted cabinet widths and positions survive autosave and reload");
+  const cabinetExport = await cabinetPage.evaluate(async ({ repo, plan }) => {
+    const { planSvg } = await import(`/@fs/${repo}/apps/web/src/components/floor-plan/export.tsx`);
+    const { DEFAULT_LAYERS } = await import(`/@fs/${repo}/apps/web/src/lib/floor-plan/model.ts`);
+    const { cabinetPlacementClear, isCabinet } = await import(`/@fs/${repo}/apps/web/src/lib/floor-plan/cabinet-snapping.ts`);
+    const doc = new DOMParser().parseFromString(planSvg(plan, { ...DEFAULT_LAYERS, roof: false }).svg, "image/svg+xml");
+    const cabinets = plan.fixtures.filter(isCabinet);
+    return { clear: cabinets.every(f => cabinetPlacementClear(f, plan)), outlines: cabinets.every(f => doc.querySelector(`[data-id="${f.id}"] g[opacity="0.5"] path[d="M2 10H98"]`)), widths: cabinets.map(f => f.width).sort((a, b) => a - b) };
+  }, { repo, plan: cabinetry });
+  await check(Promise.resolve(cabinetExport.clear && cabinetExport.outlines && isDeepStrictEqual(cabinetExport.widths, [18, 24, 24, 24, 36, 42])), "export preserves the cabinet artwork and fitted widths without overlapping walls or appliances");
+  await cabinetButton("Layers").click(); await cabinetPage.getByRole("switch", { name: "Roof structure", exact: true }).click();
+  await cabinetButton("Objects").click(); await cabinetButton("Kitchen").click();
+  await cabinetPage.screenshot({ path: resolve(output, "dynamic-cabinet-run.png"), fullPage: true });
+  await cabinetButton("Snap on").click(); await cabinetButton("Place Cabinet").click(); await cabinetClick(120.5, 90.5);
+  const freeCabinet = (await cabinetSaved()).fixtures.at(-1);
+  await check(Promise.resolve(Math.abs(freeCabinet.x - 120.5) < 1e-4 && Math.abs(freeCabinet.y - 90.5) < 1e-4 && freeCabinet.width === 24 && freeCabinet.depth === 24), "Snap off keeps manual cabinet placement and size available");
+  await cabinetContext.close();
+
   const architectureContext = await browser.newContext({ viewport: { width: 1560, height: 1040 } });
   const architecturePlan = { ...bulkPlan, id: "architecture-tools", name: "Architecture tools", fixtures: [], openings: [], notes: [], utilities: [] };
   await architectureContext.addInitScript(({ key, plan }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 1, activeId: plan.id, plans: [plan] })); }, { key, plan: architecturePlan });
@@ -748,6 +816,12 @@ try {
   const streamRefs = a4Page.node.Contents();
   const streams = streamRefs instanceof PDFArray ? streamRefs.asArray().map(ref => a4Document.context.lookup(ref)) : [streamRefs];
   const operators = streams.map(stream => inflateSync(stream.getContents()).toString()).join("\n");
+  const pdfHeaderText = content => [...content.matchAll(/<([\da-f]+)> Tj/gi)].map(match => Buffer.from(match[1], "hex").toString("latin1")).join("\n");
+  const expectedTotalArea = await page.evaluate(async ({ repo, plan }) => {
+    const { detectRooms } = await import(`/@fs/${repo}/apps/web/src/lib/floor-plan/geometry.ts`);
+    return detectRooms(plan.walls).reduce((sum, room) => sum + room.area, 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  }, { repo, plan: await saved() });
+  await check(Promise.resolve(pdfHeaderText(operators).includes(`Total usable floor area: ${expectedTotalArea} sq ft`)), "A4 PDF prints the total usable square footage in its header");
   const imageMatrix = [...operators.matchAll(/([\d.]+) 0 0 ([\d.]+) 0 0 cm/g)].map(match => [Number(match[1]), Number(match[2])]).find(([w, h]) => w > 10 && h > 10);
   const viewBox = svgText.match(/viewBox="([^"]+)"/)[1].split(" ").map(Number);
   await check(Promise.resolve(imageMatrix && Math.abs(imageMatrix[0] / viewBox[2] - 72 / ratio) < 1e-8 && Math.abs(imageMatrix[1] / viewBox[3] - 72 / ratio) < 1e-8), "PDF image geometry uses the exact printed scale on both axes");
@@ -757,6 +831,9 @@ try {
   await check(Promise.resolve((await readFile(pdfPath)).subarray(0, 4).toString() === "%PDF"), "export scaled PDF");
   const document = await PDFDocument.load(await readFile(pdfPath));
   await check(Promise.resolve(document.getPages().length === 1 && document.getPages()[0].getWidth() === 1224 && document.getSubject().includes("1:48")), "standard 1/4 inch scale remains available and auto-selects tabloid paper");
+  const scaledContents = document.getPages()[0].node.Contents();
+  const scaledStreams = scaledContents instanceof PDFArray ? scaledContents.asArray().map(ref => document.context.lookup(ref)) : [scaledContents];
+  await check(Promise.resolve(pdfHeaderText(scaledStreams.map(stream => inflateSync(stream.getContents()).toString()).join("\n")).includes(`Total usable floor area: ${expectedTotalArea} sq ft`)), "standard-scale PDF prints the same total square footage");
   await find("Close dialog").click();
   await page.locator('input[type="file"]').setInputFiles(backupPath);
   await check(Promise.resolve((await saved()).walls.length === 5), "import backup into a new editable project");

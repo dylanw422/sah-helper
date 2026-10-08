@@ -21,8 +21,8 @@ export const CATALOG: CatalogItem[] = [
   { id: "vanity", name: "Vanity & basin", category: "Bathroom", width: 36, depth: 24, symbol: "sink" },
   { id: "grab-bar", name: "Grab bar", category: "Bathroom", width: 36, depth: 3, symbol: "bar" },
   { id: "sink", name: "Kitchen sink", category: "Kitchen", width: 30, depth: 22, symbol: "sink" },
-  { id: "counter", name: "Countertop", category: "Kitchen", width: 72, depth: 24, symbol: "cabinet" },
-  { id: "island", name: "Kitchen island", category: "Kitchen", width: 60, depth: 36, symbol: "cabinet" },
+  { id: "cabinet", name: "Cabinet", category: "Kitchen", width: 24, depth: 24, symbol: "countertop" },
+  { id: "island", name: "Kitchen island", category: "Kitchen", width: 60, depth: 36, symbol: "island" },
   { id: "range", name: "Range / stove", category: "Kitchen", width: 30, depth: 28, symbol: "range" },
   { id: "fridge", name: "Refrigerator", category: "Kitchen", width: 36, depth: 36, symbol: "fridge" },
   { id: "dishwasher", name: "Dishwasher", category: "Kitchen", width: 24, depth: 24, symbol: "appliance" },
@@ -30,6 +30,8 @@ export const CATALOG: CatalogItem[] = [
   { id: "dryer", name: "Dryer", category: "Plumbing", width: 27, depth: 30, symbol: "washer" },
   { id: "water-heater", name: "Water heater", category: "Plumbing", width: 24, depth: 24, symbol: "heater" },
   { id: "floor-drain", name: "Floor drain", category: "Plumbing", width: 6, depth: 6, symbol: "drain" },
+  { id: "ac-unit", name: "A/C Unit", category: "Electrical", width: 36, depth: 36, symbol: "ac-unit" },
+  { id: "generator", name: "Generator", category: "Electrical", width: 60, depth: 36, symbol: "generator" },
   { id: "outlet", name: "Duplex outlet", category: "Electrical", width: 8, depth: 8, symbol: "outlet" },
   { id: "gfci", name: "GFCI outlet", category: "Electrical", width: 8, depth: 8, symbol: "gfci" },
   { id: "switch", name: "Light switch", category: "Electrical", width: 8, depth: 8, symbol: "switch" },
@@ -40,3 +42,5 @@ export const CATALOG: CatalogItem[] = [
 ];
 export const CATEGORIES: CatalogCategory[] = ["Furniture", "Bathroom", "Kitchen", "Electrical", "Plumbing"];
 export const CATALOG_MAP = new Map(CATALOG.map(item => [item.id, item]));
+// Existing countertops remain editable cabinetry without a second library tool.
+CATALOG_MAP.set("counter", CATALOG_MAP.get("cabinet")!);
