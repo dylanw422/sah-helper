@@ -28,6 +28,7 @@
     "dev": "turbo dev",
     "build": "turbo build",
     "check-types": "turbo check-types",
+    "test:floor-plans": "bun test tests/floor-plan.test.ts",
     "dev:web": "turbo -F web dev",
     "dev:server": "turbo -F @sah-helper/backend dev",
     "dev:setup": "turbo -F @sah-helper/backend dev:setup"

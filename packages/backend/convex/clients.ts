@@ -231,6 +231,11 @@ export const deleteClient = mutation({
       await ctx.storage.delete(file.storageId);
       await ctx.db.delete(file._id);
     }
+    const plans = await ctx.db.query("floorPlans")
+      .withIndex("by_workspaceId_and_clientId_and_updatedAt", q => q.eq("workspaceId", workspaceId).eq("clientId", args.clientId))
+      .take(101);
+    if (plans.length > 100) throw new ConvexError("Too many plans to delete in one operation.");
+    for (const plan of plans) await ctx.db.delete(plan._id);
     await ctx.db.delete(args.clientId);
   },
 });

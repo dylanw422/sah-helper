@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@sah-helper/ui/components/button";
-import { FileTextIcon, SettingsIcon } from "lucide-react";
+import { FileTextIcon, PencilRulerIcon, SettingsIcon } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { api } from "@sah-helper/backend/convex/_generated/api";
@@ -41,6 +41,10 @@ export default function Header() {
         </Link>
 
         <div className="flex items-center gap-1.5">
+          <Link href="/floor-plans" aria-label="Floor plans" className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+            <PencilRulerIcon className="size-4" />
+            <span className="hidden sm:inline">Floor plans</span>
+          </Link>
           <UserMenu />
           <Link href="/settings" aria-label="Settings">
             <Button variant="ghost" size="icon-sm">

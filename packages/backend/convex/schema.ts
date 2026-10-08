@@ -9,6 +9,16 @@ export const lineItemValidator = v.object({
 });
 
 export default defineSchema({
+  floorPlans: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    clientId: v.id("clients"), draftId: v.string(), name: v.string(), document: v.string(),
+    stage: v.optional(v.union(v.literal("before"), v.literal("after"), v.literal("archive"))),
+    wallCount: v.number(), fixtureCount: v.number(), revision: v.number(),
+    clientCreationRequestId: v.optional(v.string()), createdAt: v.number(), updatedAt: v.number(),
+  })
+    .index("by_workspaceId_and_draftId", ["workspaceId", "draftId"])
+    .index("by_workspaceId_and_updatedAt", ["workspaceId", "updatedAt"])
+    .index("by_workspaceId_and_clientId_and_updatedAt", ["workspaceId", "clientId", "updatedAt"]),
   workspaces: defineTable({ name: v.string(), createdAt: v.number() }),
   workspaceFiles: defineTable({
     workspaceId: v.optional(v.id("workspaces")),

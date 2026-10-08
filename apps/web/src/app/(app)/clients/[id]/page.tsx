@@ -24,6 +24,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { ClientFileDrawer } from "@/components/client-file-drawer";
+import { ClientFloorPlans } from "@/components/floor-plan/client-floor-plans";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { StatusBadge } from "@/components/status-badge";
 import { usePacketDownload } from "@/lib/download";
@@ -117,7 +118,7 @@ export default function ClientDetailPage() {
     { label: "Client Name", value: client.name, mono: false },
     {
       label: "Address",
-      value: `${client.street}, ${client.city}, ${client.state} ${client.zip}`,
+      value: [client.street, [client.city, [client.state, client.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")].filter(Boolean).join(", ") || "—",
       mono: false,
     },
     { label: "Phone", value: client.phone || "—", mono: true },
@@ -165,6 +166,7 @@ export default function ClientDetailPage() {
       </div>
 
       <div className="space-y-6">
+        <ClientFloorPlans clientId={clientId} />
         <Card>
           <CardHeader>
             <CardTitle>Client Details</CardTitle>
@@ -265,7 +267,7 @@ export default function ClientDetailPage() {
           </CardHeader>
           <CardContent className="flex items-center justify-between gap-4">
             <p className="text-xs text-muted-foreground">
-              Permanently delete this client and their generated packet.
+              Permanently delete this client, their floor plans, and generated packet.
             </p>
             <Button variant="destructive" size="sm" onClick={() => setConfirmOpen(true)}>
               <Trash2Icon data-icon="inline-start" />
@@ -278,7 +280,7 @@ export default function ClientDetailPage() {
       <ConfirmDialog
         open={confirmOpen}
         title="Delete this client?"
-        description="This will permanently delete this client and their packet. This cannot be undone."
+        description="This will permanently delete this client, their saved floor plans, and packet. This cannot be undone."
         confirmLabel="Delete Client"
         confirming={deleting}
         onConfirm={handleDelete}
