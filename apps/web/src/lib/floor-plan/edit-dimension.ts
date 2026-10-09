@@ -14,7 +14,7 @@ const unit = (a: Point, b: Point) => { const length = distance(a, b); return { x
 // or top to bottom for primarily vertical measurements.
 export function dimensionEnds(dim: Dimension) {
   const u = unit(dim.a, dim.b);
-  const reverse = Math.abs(u.x) >= Math.abs(u.y) ? u.x < 0 : u.y < 0;
+  const reverse = Math.abs(u.x) >= Math.abs(u.y) - 1e-8 ? u.x < 0 : u.y < 0;
   return { start: reverse ? dim.b : dim.a, end: reverse ? dim.a : dim.b };
 }
 
@@ -75,6 +75,20 @@ function boundaryRun(walls: Wall[], boundary: Wall) {
       && Math.abs(subtract(wall.a, boundary.a).x * direction.y - subtract(wall.a, boundary.a).y * direction.x) < EPS) run.push(wall);
   }
   return run;
+}
+
+function wallEndpoint(plan: Plan, p: Point, direction: Point) {
+  for (const wall of wallFaceGeometry(plan.walls)) {
+    const along = unit(wall.a, wall.b);
+    if (Math.abs(dot(along, direction)) < .9999) continue;
+    for (const [end, cap] of [["a", -1], ["b", 1]] as const) {
+      const delta = subtract(p, wall[end]);
+      if (Math.abs(dot(delta, along) - cap * wall.thickness / 2) < EPS
+        && Math.abs(delta.x * along.y - delta.y * along.x) <= wall.thickness / 2 + EPS)
+        return plan.walls.find(w => w.id === wall.id)![end];
+    }
+  }
+  return plan.walls.flatMap(w => [w.a, w.b]).find(endpoint => distance(endpoint, p) < EPS);
 }
 
 function moveAttachedWalls(plan: Plan, movingWalls: Wall[], movingPoint: Point | undefined, displacement: Point) {
@@ -149,7 +163,7 @@ export function editDimension(plan: Plan, dimensionId: string, inches: number, f
   const jamb = fixedEnd === "start" ? endJamb : startJamb;
   const boundary = boundaryAt(plan, dim, moving, direction);
   const run = boundary ? boundaryRun(plan.walls, boundary) : [];
-  const endpoint = !boundary && !jamb ? plan.walls.flatMap(w => [w.a, w.b]).find(p => distance(p, moving) < EPS) : undefined;
+  const endpoint = !boundary && !jamb ? wallEndpoint(plan, moving, direction) : undefined;
   if (!jamb && !boundary && !endpoint) throw new Error("The measured endpoint could not be located. Select a wall or opening to adjust it directly.");
   const resize = (delta: number) => {
     const displacement = { x: direction.x * delta * sign, y: direction.y * delta * sign };

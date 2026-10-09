@@ -19,6 +19,61 @@ function exteriorOffset(wall: Wall, a: Point, b: Point, rooms: Room[]): number {
   return -30;
 }
 
+function exteriorFaceDimensions(dimensions: Dimension[], walls: Wall[], rooms: Room[], bodies: Wall[]): Dimension[] {
+  const exterior = walls.filter(wall => wall.kind === "exterior");
+  const bodyById = new Map(bodies.map(wall => [wall.id, wall]));
+  return dimensions.map(dim => {
+    if (dim.interior) return dim;
+    const length = distance(dim.a, dim.b), ux = (dim.b.x - dim.a.x) / length, uy = (dim.b.y - dim.a.y) / length;
+    const nx = -uy * Math.sign(dim.offset), ny = ux * Math.sign(dim.offset);
+    const parallel = (wall: Wall) => Math.abs(ux * (wall.b.y - wall.a.y) - uy * (wall.b.x - wall.a.x)) / distance(wall.a, wall.b) < .0001;
+    const host = exterior.find(wall => parallel(wall) && project(lerp(dim.a, dim.b, .5), wall.a, wall.b).distance < .01)
+      ?? exterior.find(wall => parallel(wall) && Math.abs(-uy * (wall.a.x - dim.a.x) + ux * (wall.a.y - dim.a.y)) < .01);
+    if (!host) return dim;
+    const body = bodyById.get(host.id)!;
+    const shift = (body.a.x - host.a.x) * nx + (body.a.y - host.a.y) * ny + (dim.overall ? 1 : -1) * body.thickness / 2;
+    const endpoint = (p: Point, end: -1 | 1): Point => {
+      const face = { x: p.x + nx * shift, y: p.y + ny * shift };
+      const adjacent = (dim.overall ? exterior : walls).filter(wall => !parallel(wall) && project(p, wall.a, wall.b).distance < .01);
+      for (const wall of adjacent) {
+        const wl = distance(wall.a, wall.b), wx = (wall.b.x - wall.a.x) / wl, wy = (wall.b.y - wall.a.y) / wl;
+        const adjacentBody = bodyById.get(wall.id)!;
+        // Sample the adjacent wall beside this dimension's exterior face.
+        // Room orientation identifies its outside, including concave corners
+        // and a perpendicular wall that continues through the junction.
+        const sample = project({ x: p.x + nx, y: p.y + ny }, wall.a, wall.b).point;
+        let outward: number | undefined;
+        for (const room of rooms) {
+          if (!room.wallIds.includes(wall.id)) continue;
+          for (const [i, a] of room.points.entries()) {
+            const b = room.points[(i + 1) % room.points.length];
+            if (project(sample, a, b).distance < .01 && Math.abs(wx * (b.y - a.y) - wy * (b.x - a.x)) / distance(a, b) < .0001) {
+              outward = wx * (b.x - a.x) + wy * (b.y - a.y) > 0 ? -1 : 1;
+              break;
+            }
+          }
+          if (outward !== undefined) break;
+        }
+        // Unfinished walls have no room side. Use the face beyond this end.
+        const ax = -wy, ay = wx, slope = ux * ax + uy * ay;
+        // Small chain segments stop on the faces enclosing their clear space,
+        // including partition faces. Overall totals use exterior surfaces.
+        const faceSign = dim.overall ? outward ?? Math.sign(slope) * end : -Math.sign(slope) * end;
+        const position = (face.x - adjacentBody.a.x) * ax + (face.y - adjacentBody.a.y) * ay;
+        const delta = (faceSign * wall.thickness / 2 - position) / slope;
+        return { x: face.x + ux * delta, y: face.y + uy * delta };
+      }
+      // Preserve partition locations and opening jambs along the wall. Only
+      // a physical wall end without a continuation extends to its square cap.
+      const beyond = { x: p.x + ux * end * .02, y: p.y + uy * end * .02 };
+      const continuation = walls.some(wall => parallel(wall) && project(beyond, wall.a, wall.b).distance < .01);
+      return continuation ? face : { x: face.x + ux * end * host.thickness / 2, y: face.y + uy * end * host.thickness / 2 };
+    };
+    const a = endpoint(dim.a, -1), b = endpoint(dim.b, 1);
+    return { ...dim, a, b, value: distance(a, b) };
+  });
+}
+
 export function automaticDimensions(plan: Pick<Plan, "walls" | "openings">, suppliedRooms?: Room[]): Dimension[] {
   const dims: Dimension[] = [];
   const rooms = suppliedRooms ?? detectRooms(plan.walls);
@@ -87,8 +142,8 @@ export function automaticDimensions(plan: Pick<Plan, "walls" | "openings">, supp
       dims.push({ id: `wall:${wall.id}:segment:${i}`, a, b, value: distance(a, b), offset: wall.kind === "interior" ? -16 : exteriorOffset(wall, a, b, rooms), interior: wall.kind === "interior" });
     }
   }
-  const dimensions = [...dims, ...roomDimensions(plan, rooms)];
   const wallBodies = wallFaceGeometry(plan.walls, rooms);
+  const dimensions = [...exteriorFaceDimensions(dims, plan.walls, rooms, wallBodies), ...roomDimensions(plan, rooms)];
   for (const opening of plan.openings) {
     if (opening.kind === "window") continue;
     const wall = wallBodies.find(w => w.id === opening.wallId);

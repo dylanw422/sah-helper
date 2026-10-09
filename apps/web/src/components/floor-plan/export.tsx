@@ -50,7 +50,7 @@ export async function exportPdf(plan: Plan, layers: Layers, scale: PdfScale) {
     const totalArea = detectRooms(plan.walls).reduce((sum, room) => sum + room.area, 0);
     page.drawText(`Total usable floor area: ${totalArea.toLocaleString("en-US", { maximumFractionDigits: 0 })} sq ft`, { x: 36, y: layout.height - 65, size: 9, font: bold });
     page.drawText("Print at 100% / Actual size. Disable scaling in the print dialog to preserve the scale above.", { x: 36, y: 28, size: 8, font });
-    page.drawText("Wall dimensions are centerline; room dimensions are clear bounds.", { x: 36, y: 16, size: 8, font });
+    page.drawText("Exterior totals measure outside faces; smaller dimensions measure clear space between walls.", { x: 36, y: 16, size: 8, font });
     pdf.setTitle(pdfText(plan.name));
     pdf.setSubject(`Floor plan / Scale ${layout.scaleLabel} / ${layout.name} ${layout.orientation} / Print at 100%`);
     const bytes = await pdf.save();

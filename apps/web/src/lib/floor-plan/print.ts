@@ -1,4 +1,5 @@
 import { automaticDimensions } from "./dimensions";
+import { displayedDimensionLayout } from "./dimension-layout";
 import { bounds, distance, planBounds, roofPolygons } from "./geometry";
 import type { Layers, Plan } from "./model";
 
@@ -11,7 +12,7 @@ export function printBounds(plan: Plan, layers: Layers) {
   const b = planBounds({ ...plan, fixtures: layers.fixtures ? plan.fixtures : [], utilities: layers.utilities ? plan.utilities : [], notes: layers.notes ? plan.notes : [] });
   const points = [{ x: b.x, y: b.y }, { x: b.x + b.width, y: b.y + b.height }];
   if (layers.roof) points.push(...roofPolygons(plan).flat());
-  if (layers.dimensions) for (const dim of automaticDimensions(plan)) {
+  if (layers.dimensions) for (const { dimension: dim } of displayedDimensionLayout(automaticDimensions(plan))) {
     const length = distance(dim.a, dim.b);
     if (!length) continue;
     const nx = -(dim.b.y - dim.a.y) / length, ny = (dim.b.x - dim.a.x) / length;

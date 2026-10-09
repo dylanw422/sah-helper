@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { automaticDimensions, wallSegments } from "../apps/web/src/lib/floor-plan/dimensions";
-import { layoutDimensions, labelsOverlap, uniqueRoomDimensions } from "../apps/web/src/lib/floor-plan/dimension-layout";
+import { displayedDimensionLayout, layoutDimensions, labelsOverlap, uniqueRoomDimensions } from "../apps/web/src/lib/floor-plan/dimension-layout";
 import { bounds, detectRooms, fitOpening, moveWallPoint, moveWalls, normalizeOpenings, offsetPolygon, pointInPolygon, polygonArea, roofPolygons, snapPoint, wallFaceGeometry } from "../apps/web/src/lib/floor-plan/geometry";
 import { blankPlan, DEFAULT_LAYERS, formatLength, parsePlan, starterPlan, type Point, type Wall } from "../apps/web/src/lib/floor-plan/model";
 import { clientPlanError, planFingerprint } from "../apps/web/src/lib/floor-plan/client-plans";
@@ -117,6 +117,55 @@ describe("readable dimension labels", () => {
 });
 
 describe("opposite interior dimensions", () => {
+  test("room measurements already displayed outside are omitted in every orientation", () => {
+    for (const angle of [0, Math.PI / 4, Math.PI / 2]) for (const reverse of [false, true]) {
+      const p = rectangle();
+      const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      p.walls = p.walls.map(w => ({ ...w, a: rotate(reverse ? w.b : w.a), b: rotate(reverse ? w.a : w.b) }));
+      const dimensions = automaticDimensions(p), before = JSON.stringify(dimensions);
+      const visible = displayedDimensionLayout(dimensions);
+      expect(visible.some(mark => mark.dimension.interior)).toBe(false);
+      expect(visible.filter(mark => mark.labelBounds)).toHaveLength(4);
+      expect(JSON.stringify(dimensions)).toBe(before);
+    }
+  });
+  test("shorter interior spans opposite a longer exterior wall remain visible and editable", () => {
+    for (const angle of [0, Math.PI / 4, Math.PI / 2]) for (const reverse of [false, true]) {
+      const p = rectangle();
+      p.walls[0].kind = "interior";
+      const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      p.walls.push(wall("branch", { x: 120, y: 0 }, { x: 120, y: 60 }, "interior"));
+      p.walls = p.walls.map(w => ({ ...w, a: rotate(reverse ? w.b : w.a), b: rotate(reverse ? w.a : w.b) }));
+      const inside = displayedDimensionLayout(automaticDimensions(p)).filter(mark => mark.dimension.interior && mark.labelBounds);
+      expect(inside.map(mark => Math.round(mark.dimension.value)).sort((a, b) => a - b)).toEqual([60, 114, 114]);
+      for (const mark of inside) {
+        const moved = editDimension(p, mark.dimension.id, mark.dimension.value + 12);
+        expect(automaticDimensions(moved).find(dim => dim.id === mark.dimension.id)!.value).toBeCloseTo(mark.dimension.value + 12);
+      }
+      p.walls = p.walls.filter(w => w.id !== "branch");
+      expect(displayedDimensionLayout(automaticDimensions(p)).some(mark => mark.dimension.interior)).toBe(false);
+    }
+  });
+  test("matching lengths at different projected positions and directions remain independent", () => {
+    const exterior = { id: "exterior", a: { x: 0, y: 0 }, b: { x: 120, y: 0 }, value: 120, offset: -36 };
+    const duplicate = { ...exterior, id: "duplicate", a: { x: 120, y: 80 }, b: { x: 0, y: 80 }, interior: true, offset: 14 };
+    const separate = { ...duplicate, id: "separate", a: { x: 360, y: 80 }, b: { x: 240, y: 80 } };
+    const perpendicular = { ...duplicate, id: "perpendicular", a: { x: 180, y: 30 }, b: { x: 180, y: 150 } };
+    expect(displayedDimensionLayout([exterior, duplicate, separate, perpendicular]).map(mark => mark.dimension.id)).toEqual(["exterior", "separate", "perpendicular"]);
+  });
+  test("doorway widths and small-room measurements without a readable exterior label remain visible", () => {
+    const p = rectangle();
+    p.openings = [{ id: "hallway", wallId: "w0", kind: "opening", t: .5, width: 36, flip: false }];
+    expect(displayedDimensionLayout(automaticDimensions(p)).filter(mark => mark.dimension.doorway && mark.labelBounds).map(mark => mark.dimension.openingId)).toEqual(["hallway"]);
+    const small = rectangle(36, 42);
+    for (const scale of [.7, 1, 5]) {
+      const marks = displayedDimensionLayout(automaticDimensions(small), scale), labels = marks.filter(mark => mark.labelBounds);
+      expect(labels.some(mark => mark.dimension.a.x === mark.dimension.b.x)).toBe(true);
+      expect(labels.some(mark => mark.dimension.a.y === mark.dimension.b.y)).toBe(true);
+      for (const [i, mark] of labels.entries()) for (const other of labels.slice(i + 1)) expect(labelsOverlap(mark.labelBounds!, other.labelBounds!)).toBe(false);
+      expect(marks.some(mark => mark.dimension.interior && mark.labelBounds)).toBe(true);
+    }
+  });
   test("rectangles and squares retain one span per direction in every orientation", () => {
     for (const height of [180, 240]) for (const angle of [0, Math.PI / 4, Math.PI / 2]) {
       const p = rectangle(240, height);
@@ -712,7 +761,7 @@ describe("wall connections and openings", () => {
     const p = rectangle(), w = p.walls[0];
     p.openings.push({ id: "d", wallId: w.id, kind: "door", width: 36, t: 0.5, flip: false });
     expect(wallSegments(w, p)).toEqual([{ a: { x: 0, y: 0 }, b: { x: 102, y: 0 } }, { a: { x: 138, y: 0 }, b: { x: 240, y: 0 } }]);
-    expect(automaticDimensions(p).filter(d => d.id.startsWith("exterior:side:north:segment:")).map(d => d.value)).toEqual([102, 36, 102]);
+    expect(automaticDimensions(p).filter(d => d.id.startsWith("exterior:side:north:segment:")).map(d => d.value)).toEqual([99, 36, 99]);
   });
   test("interior dimensions include door jambs and the opening width", () => {
     const p = rectangle();
@@ -730,6 +779,76 @@ describe("wall connections and openings", () => {
 });
 
 describe("exterior dimension placement", () => {
+  test("smaller exterior dimensions stop on fractional partition faces for full and dangling T walls", () => {
+    for (const full of [false, true]) for (const angle of [0, Math.PI / 4, Math.PI / 2]) for (const reverse of [false, true]) {
+      const p = rectangle();
+      p.walls.push({ ...wall("partition", { x: 120, y: 0 }, { x: 120, y: full ? 180 : 60 }, "interior"), thickness: 4.5 });
+      const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      const local = (p: Point) => ({ x: p.x * Math.cos(angle) + p.y * Math.sin(angle), y: -p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      p.walls = p.walls.map(w => ({ ...w, a: rotate(reverse ? w.b : w.a), b: rotate(reverse ? w.a : w.b) }));
+      const small = automaticDimensions(p).filter(dim => !dim.interior && !dim.overall && Math.abs(local(dim.a).y - 3) < .01 && Math.abs(local(dim.b).y - 3) < .01);
+      expect(small.map(dim => dim.value)).toHaveLength(2);
+      for (const dim of small) expect(dim.value).toBeCloseTo(114.75);
+      expect(small.flatMap(dim => [local(dim.a).x, local(dim.b).x]).sort((a, b) => a - b).map(x => Math.round(x * 100) / 100)).toEqual([3, 117.75, 122.25, 237]);
+      const total = automaticDimensions(p).find(dim => dim.overall && Math.abs(local(dim.a).y + 3) < .01 && Math.abs(local(dim.b).y + 3) < .01);
+      if (total) expect(total.value).toBeCloseTo(246);
+    }
+  });
+  test("smaller exterior chains measure clear space while larger totals measure outside faces", () => {
+    for (const angle of [0, Math.PI / 4, Math.PI / 2]) for (const reverse of [false, true]) {
+      const p = rectangle();
+      p.walls[1].thickness = 8;
+      p.walls[3].thickness = 10;
+      p.walls.push(wall("partition", { x: 120, y: 0 }, { x: 120, y: 180 }, "interior"));
+      const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      const local = (p: Point) => ({ x: p.x * Math.cos(angle) + p.y * Math.sin(angle), y: -p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      p.walls = p.walls.map(w => ({ ...w, a: rotate(reverse ? w.b : w.a), b: rotate(reverse ? w.a : w.b) }));
+      const dimensions = automaticDimensions(p);
+      const north = dimensions.filter(dim => !dim.interior && Math.abs(local(dim.a).y) < 3.01 && Math.abs(local(dim.b).y) < 3.01 && Math.abs(local(dim.a).x - local(dim.b).x) > 1);
+      const segments = north.filter(dim => !dim.overall).sort((a, b) => Math.min(local(a.a).x, local(a.b).x) - Math.min(local(b.a).x, local(b.b).x));
+      expect(segments.map(dim => Math.round(dim.value))).toEqual([112, 113]);
+      expect(Math.min(local(segments[0].a).x, local(segments[0].b).x)).toBeCloseTo(5);
+      expect(Math.max(local(segments[0].a).x, local(segments[0].b).x)).toBeCloseTo(117);
+      expect(Math.min(local(segments[1].a).x, local(segments[1].b).x)).toBeCloseTo(123);
+      expect(Math.max(local(segments[1].a).x, local(segments[1].b).x)).toBeCloseTo(236);
+      if (north.some(dim => dim.overall)) expect(north.find(dim => dim.overall)!.value).toBeCloseTo(249);
+      const target = segments[0];
+      for (const fixed of ["start", "end"] as const) {
+        const resized = editDimension(p, target.id, target.value + 12, fixed);
+        const updated = automaticDimensions(resized).find(dim => dim.id === target.id)!;
+        expect(updated.value).toBeCloseTo(target.value + 12);
+        expect(dimensionEnds(updated)[fixed].x).toBeCloseTo(dimensionEnds(target)[fixed].x);
+        expect(dimensionEnds(updated)[fixed].y).toBeCloseTo(dimensionEnds(target)[fixed].y);
+      }
+    }
+  });
+  test("recessed smaller measurements stop on the nearest wall face for either wall direction", () => {
+    for (const angle of [0, Math.PI / 4, Math.PI / 2]) for (const reverse of [false, true]) {
+      const p = blankPlan(), corners = [{ x: 0, y: -120 }, { x: 360, y: -120 }, { x: 360, y: 180 }, { x: 240, y: 180 }, { x: 240, y: 0 }, { x: 0, y: 0 }];
+      const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      const local = (p: Point) => ({ x: p.x * Math.cos(angle) + p.y * Math.sin(angle), y: -p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      p.walls = corners.map((a, i) => ({ ...wall(`corner${i}`, rotate(reverse ? corners[(i + 1) % corners.length] : a), rotate(reverse ? a : corners[(i + 1) % corners.length])), thickness: i === 4 ? 10.5 : 6 }));
+      const dim = automaticDimensions(p).find(dim => dim.id === "wall:corner3:segment:0")!;
+      expect([local(dim.a).y, local(dim.b).y].sort((a, b) => a - b)[0]).toBeCloseTo(5.25);
+      expect([local(dim.a).y, local(dim.b).y].sort((a, b) => a - b)[1]).toBeCloseTo(177);
+      expect(local(dim.a).x).toBeCloseTo(243);
+      expect(local(dim.b).x).toBeCloseTo(243);
+      expect(dim.value).toBeCloseTo(171.75);
+    }
+  });
+  test("unfinished exterior dimensions measure their physical end caps and resize from either end", () => {
+    const p = blankPlan();
+    p.walls = [wall("unfinished", { x: 0, y: 0 }, { x: 120, y: 120 })];
+    const dim = automaticDimensions(p).find(dim => !dim.interior)!;
+    expect(dim.value).toBeCloseTo(120 * Math.SQRT2 + 6);
+    for (const fixed of ["start", "end"] as const) {
+      const resized = editDimension(p, dim.id, dim.value + 12, fixed);
+      const updated = automaticDimensions(resized).find(d => d.id === dim.id)!;
+      expect(updated.value).toBeCloseTo(dim.value + 12);
+      expect(dimensionEnds(updated)[fixed].x).toBeCloseTo(dimensionEnds(dim)[fixed].x);
+      expect(dimensionEnds(updated)[fixed].y).toBeCloseTo(dimensionEnds(dim)[fixed].y);
+    }
+  });
   test("an exterior wall made inset by another wall keeps its chain opposite the interior chain", () => {
     for (const reverse of [false, true]) {
       const p = rectangle();
@@ -739,7 +858,7 @@ describe("exterior dimension placement", () => {
       const exterior = dimensions.find(d => d.id === "wall:w3:segment:0")!;
       const interior = dimensions.find(d => d.roomId && d.a.x === 3 && d.b.x === 3)!;
       const lineX = (dim: typeof exterior) => dim.a.x - (dim.b.y - dim.a.y) / dim.value * dim.offset;
-      expect(lineX(exterior)).toBe(-30);
+      expect(lineX(exterior)).toBe(-27);
       expect(lineX(interior)).toBe(17);
     }
   });
@@ -761,7 +880,8 @@ describe("exterior dimension placement", () => {
           const b = points[(i + 1) % points.length];
           const dx = b.x - a.x, dy = b.y - a.y;
           const along = ((midpoint.x - a.x) * dx + (midpoint.y - a.y) * dy) / (dx * dx + dy * dy);
-          return along >= 0 && along <= 1 && Math.abs(dx * (midpoint.y - a.y) - dy * (midpoint.x - a.x)) / Math.hypot(dx, dy) < .01;
+          return along >= 0 && along <= 1 && Math.abs(dx * (dim.b.y - dim.a.y) - dy * (dim.b.x - dim.a.x)) < .01
+            && Math.abs(dx * (midpoint.y - a.y) - dy * (midpoint.x - a.x)) / Math.hypot(dx, dy) <= 3.01;
         });
         expect(edge).toBeGreaterThanOrEqual(0);
         const a = points[edge], b = points[(edge + 1) % points.length];
@@ -1031,12 +1151,13 @@ describe("editing dimensions", () => {
   test("an exterior total moves the entire end wall and its corners without drifting interior partitions", () => {
     const p = rectangle(); p.walls.push(wall("partition", { x: 120, y: 0 }, { x: 120, y: 180 }, "interior"));
     const moved = editDimension(p, "exterior:side:north:overall", 300);
-    expect(moved.walls.find(w => w.id === "w1")!.a).toEqual({ x: 300, y: 0 });
-    expect(moved.walls.find(w => w.id === "w1")!.b).toEqual({ x: 300, y: 180 });
-    expect(moved.walls.find(w => w.id === "w2")!.a).toEqual({ x: 300, y: 180 });
+    expect(moved.walls.find(w => w.id === "w1")!.a).toEqual({ x: 294, y: 0 });
+    expect(moved.walls.find(w => w.id === "w1")!.b).toEqual({ x: 294, y: 180 });
+    expect(moved.walls.find(w => w.id === "w2")!.a).toEqual({ x: 294, y: 180 });
+    expect(automaticDimensions(moved).find(dim => dim.id === "exterior:side:north:overall")!.value).toBe(300);
     expect(moved.walls.find(w => w.id === "partition")).toEqual(p.walls.at(-1));
     expect(detectRooms(moved.walls)).toHaveLength(2);
-    expect(roofPolygons(moved)[0].some(point => point.x > 300)).toBe(true);
+    expect(roofPolygons(moved)[0].some(point => point.x > 294)).toBe(true);
     expect(p.walls[1].a.x).toBe(240);
   });
   test("clear interior edits move the partition and attached branches while keeping the opposite outer wall fixed", () => {
@@ -1085,10 +1206,10 @@ describe("editing dimensions", () => {
     p.openings = [{ id: "door", wallId: "w0", kind: "door", width: 36, t: .5, flip: true }];
     const offset = editDimension(p, "exterior:side:north:segment:0", 120);
     expect(offset.walls).toEqual(p.walls);
-    expect(offset.openings[0].t * 240).toBeCloseTo(138, 5);
+    expect(offset.openings[0].t * 240).toBeCloseTo(141, 5);
     const wallSpan = editDimension(p, "exterior:side:north:segment:2", 120);
-    expect(wallSpan.walls[1].a.x).toBe(258);
-    expect(wallSpan.openings[0].t * 258).toBeCloseTo(120, 5);
+    expect(wallSpan.walls[1].a.x).toBe(261);
+    expect(wallSpan.openings[0].t * 261).toBeCloseTo(120, 5);
     const width = editDimension(p, "exterior:side:north:segment:1", 48);
     expect(width.openings[0]).toMatchObject({ width: 48, t: .525, flip: true });
     expect(width.walls).toEqual(p.walls);

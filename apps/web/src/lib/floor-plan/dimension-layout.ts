@@ -75,7 +75,7 @@ export function uniqueRoomDimensions(dimensions: Dimension[]): Dimension[] {
 
 // Presentation only: retain every measured span and stable ID for geometry
 // and editing, while choosing readable labels for the current drawing scale.
-export function layoutDimensions(dimensions: Dimension[], scale = 1): DimensionLayout[] {
+export function layoutDimensions(dimensions: Dimension[], scale = 1, fixedObstacles: LabelBounds[] = []): DimensionLayout[] {
   // Keep a minimum size in drawing coordinates. Above 100% zoom, the SVG
   // magnifies the text along with the plan instead of shrinking its font.
   const fontScale = Math.min(1, Math.max(scale, .01));
@@ -93,7 +93,7 @@ export function layoutDimensions(dimensions: Dimension[], scale = 1): DimensionL
   const rank = (dim: Dimension) => dim.doorway ? 0 : dim.overall ? 1 : main.has(dim) ? 2 : 3;
   const padding = Math.min(4, 4 / Math.max(scale, .01));
   const gap = Math.min(2, 2 / Math.max(scale, .01));
-  const placed: LabelBounds[] = [], layouts = new Map<string, DimensionLayout>();
+  const placed: LabelBounds[] = [...fixedObstacles], layouts = new Map<string, DimensionLayout>();
   for (const dim of [...visible].sort((a, b) => rank(a) - rank(b) || b.value - a.value || a.id.localeCompare(b.id))) {
     const length = distance(dim.a, dim.b), label = dimensionLabel(dim.value);
     let fontSize = (dim.overall ? 13 : 11) / fontScale;
@@ -110,18 +110,18 @@ export function layoutDimensions(dimensions: Dimension[], scale = 1): DimensionL
       placed.push(box);
     }
   }
-  // A small room must retain two different measuring directions. Try the
-  // available faces, shorter whole-foot labels, and positions along each span
-  // before sacrificing either measurement to the collision rules.
+  // Keep the room's remaining measuring directions readable, including a
+  // single interior direction when the other is already shown outside. Try
+  // shorter labels and positions along each span before hiding a measurement.
   const roomIds = new Set([...primary.values()].map(dim => dim.roomId!));
   for (const roomId of roomIds) {
     const directions = [...primary.values()].filter(dim => dim.roomId === roomId).sort((a, b) => b.value - a.value).slice(0, 2);
-    if (directions.length < 2) continue;
+    if (!directions.length || directions.length === 1 && !fixedObstacles.length) continue;
     const aligned = (a: Dimension, b: Dimension) => Math.abs((a.b.x - a.a.x) * (b.b.y - b.a.y) - (a.b.y - a.a.y) * (b.b.x - b.a.x)) < distance(a.a, a.b) * distance(b.a, b.b) * .0001;
     const hasDirection = (direction: Dimension) => [...layouts.values()].some(mark => mark.dimension.roomId === roomId && mark.labelBounds && !mark.dimension.doorway && aligned(mark.dimension, direction));
     if (directions.every(hasDirection)) continue;
     const roomMarks = [...layouts.values()].filter(mark => mark.dimension.roomId === roomId && !mark.dimension.doorway);
-    const obstacles = [...layouts.values()].filter(mark => !roomMarks.includes(mark)).flatMap(mark => mark.labelBounds ? [mark.labelBounds] : []);
+    const obstacles = [...fixedObstacles, ...[...layouts.values()].filter(mark => !roomMarks.includes(mark)).flatMap(mark => mark.labelBounds ? [mark.labelBounds] : [])];
     const candidates = (direction: Dimension): DimensionLayout[] => {
       const result: DimensionLayout[] = [];
       const compactPadding = Math.min(padding, 3 / Math.max(scale, .01), 3);
@@ -139,15 +139,38 @@ export function layoutDimensions(dimensions: Dimension[], scale = 1): DimensionL
       }
       return result;
     };
-    const first = candidates(directions[0]), second = candidates(directions[1]);
-    let pair: [DimensionLayout, DimensionLayout] | undefined;
-    for (const a of first) {
-      const b = second.find(mark => !labelsOverlap(a.labelBounds!, mark.labelBounds!));
-      if (b) { pair = [a, b]; break; }
+    const first = candidates(directions[0]);
+    let chosen: DimensionLayout[] | undefined;
+    if (directions.length === 1) chosen = first.slice(0, 1);
+    else {
+      const second = candidates(directions[1]);
+      for (const a of first) {
+        const b = second.find(mark => !labelsOverlap(a.labelBounds!, mark.labelBounds!));
+        if (b) { chosen = [a, b]; break; }
+      }
     }
-    if (!pair) continue;
+    if (!chosen?.length) continue;
     for (const mark of roomMarks) layouts.set(mark.dimension.id, { dimension: { ...mark.dimension, hideLabel: true }, fontSize: mark.fontSize });
-    for (const mark of pair) layouts.set(mark.dimension.id, mark);
+    for (const mark of chosen) layouts.set(mark.dimension.id, mark);
   }
   return visible.map(dim => layouts.get(dim.id)!);
+}
+
+// Exterior labels supply the room's clear measurements whenever their
+// projected endpoints match. Keep different spans and actual doorway widths.
+export function displayedDimensionLayout(dimensions: Dimension[], scale = 1): DimensionLayout[] {
+  const outside = layoutDimensions(dimensions.filter(dim => !dim.interior || dim.doorway), scale);
+  const measuredOutside = outside.filter(mark => !mark.dimension.interior && mark.labelBounds).map(mark => mark.dimension);
+  const covered = (dim: Dimension) => measuredOutside.some(other => {
+    if (Math.abs(other.value - dim.value) > .01) return false;
+    const length = distance(other.a, other.b), dimLength = distance(dim.a, dim.b);
+    const ux = (other.b.x - other.a.x) / length, uy = (other.b.y - other.a.y) / length;
+    if (Math.abs(ux * (dim.b.y - dim.a.y) - uy * (dim.b.x - dim.a.x)) / dimLength > .0001) return false;
+    const along = [dim.a, dim.b].map(p => (p.x - other.a.x) * ux + (p.y - other.a.y) * uy);
+    return Math.abs(Math.min(...along)) < .01 && Math.abs(Math.max(...along) - length) < .01;
+  });
+  const inside = layoutDimensions(dimensions.filter(dim => dim.interior && !dim.doorway && !covered(dim)), scale,
+    outside.flatMap(mark => mark.labelBounds ? [mark.labelBounds] : []));
+  const marks = new Map([...outside, ...inside].map(mark => [mark.dimension.id, mark]));
+  return dimensions.flatMap(dim => marks.has(dim.id) ? [marks.get(dim.id)!] : []);
 }

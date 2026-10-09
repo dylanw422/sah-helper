@@ -1,7 +1,7 @@
 import { memo, useMemo } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
 import { automaticDimensions, wallSegments, type Dimension } from "@/lib/floor-plan/dimensions";
-import { dimensionLabel, layoutDimensions, labelsOverlap, type LabelBounds } from "@/lib/floor-plan/dimension-layout";
+import { dimensionLabel, displayedDimensionLayout, labelsOverlap, type LabelBounds } from "@/lib/floor-plan/dimension-layout";
 import { bounds, detectRooms, distance, fixtureCorners, lerp, pointInPolygon, polygonString, wallFaceGeometry, type Room } from "@/lib/floor-plan/geometry";
 import { roofLayouts } from "@/lib/floor-plan/roof";
 import { noteLayout } from "@/lib/floor-plan/notes";
@@ -75,7 +75,7 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
   const detected = useMemo(() => suppliedRooms ?? detectRooms(plan.walls), [plan.walls, suppliedRooms]);
   const roofs = useMemo(() => layers.roof ? roofLayouts(plan) : [], [plan.walls, plan.roofOverhang, plan.roofType, layers.roof]);
   const dims = useMemo(() => layers.dimensions ? automaticDimensions({ walls: plan.walls, openings: plan.openings }, detected) : [], [plan.walls, plan.openings, detected, layers.dimensions]);
-  const dimensionLayout = useMemo(() => layoutDimensions(dims, scale), [dims, scale]);
+  const dimensionLayout = useMemo(() => displayedDimensionLayout(dims, scale), [dims, scale]);
   const dimensionLabels = useMemo(() => dimensionLayout.flatMap(mark => mark.labelBounds ? [mark.labelBounds] : []), [dimensionLayout]);
   const wallBodies = useMemo(() => wallFaceGeometry(plan.walls, detected), [plan.walls, detected]);
   const wallInk = useMemo(() => wallBodies.map(wall => ({ wall, segments: wallSegments(wall, plan) })), [wallBodies, plan.openings]);

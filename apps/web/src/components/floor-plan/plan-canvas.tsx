@@ -4,7 +4,7 @@ import { Maximize, Minus, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
 import { automaticDimensions, type Dimension } from "@/lib/floor-plan/dimensions";
-import { layoutDimensions } from "@/lib/floor-plan/dimension-layout";
+import { displayedDimensionLayout } from "@/lib/floor-plan/dimension-layout";
 import { dimensionEnds, dimensionOpening, type FixedDimensionEnd } from "@/lib/floor-plan/edit-dimension";
 import { distance, fitOpening, fixtureCorners, lerp, moveWallPoint, moveWalls, normalizeOpenings, planBounds, polygonString, project, samePoint, snapPoint } from "@/lib/floor-plan/geometry";
 import { formatLength, id, type Fixture, type Layers, type Plan, type Point, type Selection, type Tool, type Utility, type Wall } from "@/lib/floor-plan/model";
@@ -282,7 +282,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
   const lineTool = ["exterior", "interior", "electrical", "cold", "hot", "drain"].includes(tool);
   const cursor = spacePan || tool === "pan" ? "grab" : tool === "select" ? "default" : "crosshair";
   const dimensionLine = editingDimension ? (() => {
-    const mark = layoutDimensions(automaticDimensions(plan), view.zoom).find(mark => mark.dimension.id === editingDimension.id);
+    const mark = displayedDimensionLayout(automaticDimensions(plan), view.zoom).find(mark => mark.dimension.id === editingDimension.id);
     const d = mark?.dimension ?? editingDimension, length = distance(d.a, d.b);
     const offset = { x: -(d.b.y - d.a.y) / length * d.offset, y: (d.b.x - d.a.x) / length * d.offset };
     const a = { x: d.a.x + offset.x, y: d.a.y + offset.y }, b = { x: d.b.x + offset.x, y: d.b.y + offset.y };
