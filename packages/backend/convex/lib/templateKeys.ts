@@ -30,6 +30,17 @@ export type GeneratedDocName = (typeof GENERATED_DOCS)[number];
 export type UploadedDocName = Exclude<DocName, GeneratedDocName>;
 export type DrawCount = 4 | 5 | 6;
 
+export const STANDARD_PACKET_DOCUMENTS = [
+  { key: "va-addendum", name: "VA Addendum", detail: "One copy per packet" },
+  { key: "scope-of-work", name: "Scope of Work", detail: "Generated from the invoice" },
+  { key: "construction-stage-completion", name: "Construction Stage Completion", detail: "One copy per draw" },
+  { key: "lien-release", name: "Lien Release", detail: "One copy per draw" },
+  { key: "invoice", name: "Invoice", detail: "The invoice used to create the packet" },
+  { key: "payment-schedule", name: "Payment Schedule", detail: "The schedule matching the packet's draw count" },
+] as const;
+
+export type StandardPacketDocumentKey = (typeof STANDARD_PACKET_DOCUMENTS)[number]["key"];
+
 export const TEMPLATE_KEYS = [
   "construction-contract-4draw",
   "construction-contract-5draw",

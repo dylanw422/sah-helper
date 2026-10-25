@@ -76,7 +76,7 @@ async function checkedDocuments(
 ) {
   return Promise.all(ids.map(async id => {
     const doc = await ctx.db.get(id);
-    if (!doc || doc.category === "contract" || !(await ctx.storage.getUrl(doc.storageId)))
+    if (!doc || doc.category === "contract" || doc.category === "packet-document" || !(await ctx.storage.getUrl(doc.storageId)))
       throw new ConvexError("A selected document is missing or cannot be added to a bundle.");
     return doc;
   }));

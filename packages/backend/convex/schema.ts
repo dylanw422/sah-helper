@@ -8,7 +8,17 @@ export const lineItemValidator = v.object({
   amount: v.number(),
 });
 
+export const standardPacketDocumentKeyValidator = v.union(
+  v.literal("va-addendum"), v.literal("scope-of-work"),
+  v.literal("construction-stage-completion"), v.literal("lien-release"),
+  v.literal("invoice"), v.literal("payment-schedule"),
+);
+
 export default defineSchema({
+  packetDocumentSettings: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    excludedDocuments: v.array(standardPacketDocumentKeyValidator),
+  }).index("by_workspaceId", ["workspaceId"]),
   floorPlans: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
     clientId: v.id("clients"), draftId: v.string(), name: v.string(), document: v.string(),
@@ -146,14 +156,15 @@ export default defineSchema({
     .index("by_key", ["key"])
     .index("by_workspaceId_and_key", ["workspaceId", "key"]),
 
-  // Contracts are private to their workspace. Waivers, spec sheets, and
-  // job-specific documents are shared across workspaces; workspaceId records
-  // the uploader's workspace for deletion permissions. Selected library files
+  // Contracts and additional standard packet documents are private to their
+  // workspace. Waivers, spec sheets, and job-specific documents are shared.
+  // Selected library files
   // are copied into private client packets.
   customDocuments: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
     category: v.union(
       v.literal("contract"),
+      v.literal("packet-document"),
       v.literal("waiver"),
       v.literal("spec-sheet"),
       v.literal("job-specific"),

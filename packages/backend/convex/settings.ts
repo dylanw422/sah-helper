@@ -3,6 +3,35 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
 import { MAX_GRANT_AMOUNT } from "./lib/grant";
+import { standardPacketDocumentKeyValidator } from "./schema";
+
+export const getExcludedPacketDocuments = query({
+  args: {},
+  returns: v.array(standardPacketDocumentKeyValidator),
+  handler: async (ctx) => {
+    const workspaceId = await requireAuth(ctx);
+    const config = await ctx.db.query("packetDocumentSettings")
+      .withIndex("by_workspaceId", q => q.eq("workspaceId", workspaceId)).unique();
+    return config?.excludedDocuments ?? [];
+  },
+});
+
+export const setPacketDocumentIncluded = mutation({
+  args: { key: standardPacketDocumentKeyValidator, included: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const workspaceId = await requireAuth(ctx);
+    const config = await ctx.db.query("packetDocumentSettings")
+      .withIndex("by_workspaceId", q => q.eq("workspaceId", workspaceId)).unique();
+    const excluded = new Set(config?.excludedDocuments ?? []);
+    if (args.included) excluded.delete(args.key);
+    else excluded.add(args.key);
+    const excludedDocuments = [...excluded];
+    if (config) await ctx.db.patch(config._id, { excludedDocuments });
+    else await ctx.db.insert("packetDocumentSettings", { workspaceId, excludedDocuments });
+    return null;
+  },
+});
 
 export const getSettings = query({
   args: {},

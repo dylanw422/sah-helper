@@ -1,3 +1,7 @@
+"use node";
+
+// PDF parsing and merging can exceed the default runtime's 64 MiB heap,
+// especially with architectural plans. Node actions have a 512 MiB budget.
 import { storeWorkspaceFile } from "./lib/files";
 import { v } from "convex/values";
 
@@ -6,7 +10,7 @@ import { action } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { requireAuth } from "./lib/auth";
 import { buildDrawSchedule, type DrawSchedule } from "./lib/drawSchedule";
-import { fillTemplate, mergeDocsIncrementally, mergePdfBytes } from "./lib/pdf";
+import { fillTemplate, mergeDocsIncrementally } from "./lib/pdf";
 import {
   buildFieldValues,
   buildSizeGroups,
@@ -78,10 +82,11 @@ export const generatePacket = action({
 
     const templates = await ctx.runQuery(api.templates.listTemplates);
     const drawCount = args.drawCount as DrawCount;
+    const excludedDocuments = new Set<string>(await ctx.runQuery(api.settings.getExcludedPacketDocuments, {}));
 
     const uploadedDocs = DOC_ORDER.filter(
       (doc): doc is UploadedDocName =>
-        !(GENERATED_DOCS as readonly string[]).includes(doc),
+        !excludedDocuments.has(doc) && !(GENERATED_DOCS as readonly string[]).includes(doc),
     );
     const neededKeys = uploadedDocs.map((doc) =>
       getTemplateKey(doc, drawCount),
@@ -134,7 +139,7 @@ export const generatePacket = action({
       isFinalDraw: "",
     };
 
-    const scopeSections: ScopeSection[] = await ctx.runAction(
+    const scopeSections: ScopeSection[] = excludedDocuments.has("scope-of-work") ? [] : await ctx.runAction(
       internal.scopeOfWork.generateScopeSections,
       { lineItems: args.lineItems },
     );
@@ -158,6 +163,7 @@ export const generatePacket = action({
       );
 
     for (const docName of DOC_ORDER) {
+      if (excludedDocuments.has(docName)) continue;
       if (docName === "scope-of-work") {
         const scopeDoc = await buildScopeOfWorkPdf({
           clientName: args.name,
@@ -273,6 +279,8 @@ export const generatePacket = action({
       });
     }
 
+    const paymentScheduleEntry = excludedDocuments.has("payment-schedule") ? undefined : entries[entries.length - 1];
+
     // Custom contract documents are always included, filled with the same
     // packet data, and slot in right after the construction contract (index 0).
     const customContracts = await ctx.runQuery(
@@ -307,13 +315,15 @@ export const generatePacket = action({
     }
     entries.splice(1, 0, ...customContractEntries);
 
-    // The invoice slots in just before the payment schedule, which is last in
-    // DOC_ORDER and must always end the packet. It already lives in storage, so
-    // it reuses its existing storageId rather than storing a copy.
-    entries.splice(entries.length - 1, 0, {
-      filename: "Invoice.pdf",
-      storageId: args.invoiceStorageId,
-    });
+    // The schedule remains last when included. Without it, append documents
+    // after the existing entries instead of inserting before an unrelated PDF.
+    const appendBeforeSchedule = (added: typeof entries) => {
+      const scheduleIndex = paymentScheduleEntry ? entries.indexOf(paymentScheduleEntry) : -1;
+      entries.splice(scheduleIndex < 0 ? entries.length : scheduleIndex, 0, ...added);
+    };
+    if (!excludedDocuments.has("invoice")) {
+      appendBeforeSchedule([{ filename: "Invoice.pdf", storageId: args.invoiceStorageId }]);
+    }
 
     // Selected waivers then spec sheets merge verbatim after the invoice, still
     // keeping the payment schedule last. Each gets a per-packet storage copy
@@ -348,7 +358,21 @@ export const generatePacket = action({
         specSheet: args.specSheetIds.includes(id),
       });
     }
-    entries.splice(entries.length - 1, 0, ...selectedEntries);
+    appendBeforeSchedule(selectedEntries);
+
+    const standardDocuments = await ctx.runQuery(internal.customDocuments.listCustomDocumentsInternal, {
+      category: "packet-document",
+    });
+    const standardEntries: typeof entries = [];
+    for (const document of standardDocuments) {
+      const blob = await ctx.storage.get(document.storageId);
+      if (!blob) throw new Error(`Document file missing from storage: ${document.displayName}`);
+      standardEntries.push({
+        filename: `${document.displayName}.pdf`,
+        storageId: await storeWorkspaceFile(ctx, blob, workspaceId),
+      });
+    }
+    appendBeforeSchedule(standardEntries);
 
     // Merge by streaming each stored document back one at a time. Only a single
     // source document is resident at once; spec sheets are normalized to letter
@@ -396,6 +420,7 @@ export const generatePacket = action({
 
 export const regeneratePacket = action({
   args: { clientId: v.id("clients") },
+  returns: v.object({ packetStorageId: v.id("_storage") }),
   handler: async (ctx, args): Promise<{ packetStorageId: Id<"_storage"> }> => {
     const workspaceId = await requireAuth(ctx);
 
@@ -406,14 +431,18 @@ export const regeneratePacket = action({
       throw new Error("No files found for this client.");
     }
 
-    const docBytes: ArrayBuffer[] = [];
-    for (const file of files) {
-      const blob = await ctx.storage.get(file.storageId);
-      if (!blob) throw new Error(`File missing from storage: ${file.filename}`);
-      docBytes.push(await blob.arrayBuffer());
-    }
-
-    const mergedBytes = await mergePdfBytes(docBytes);
+    // Fetch and parse one source at a time, as in initial generation. Retaining
+    // every buffer and parsing every PDF in parallel multiplies peak memory.
+    // Keep uploaded plans at their original page sizes.
+    const mergedBytes = await mergeDocsIncrementally(
+      files.map((file) => ({
+        load: async () => {
+          const blob = await ctx.storage.get(file.storageId);
+          if (!blob) throw new Error(`File missing from storage: ${file.filename}`);
+          return blob.arrayBuffer();
+        },
+      })),
+    );
     const packetStorageId = await storeWorkspaceFile(
       ctx,
       new Blob([mergedBytes as BlobPart], { type: "application/pdf" }),

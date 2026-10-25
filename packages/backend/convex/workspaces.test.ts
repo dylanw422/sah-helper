@@ -1,11 +1,12 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import betterAuthTest from "@convex-dev/better-auth/test";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { STANDARD_PACKET_DOCUMENTS } from "./lib/templateKeys";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 function setup() {
@@ -308,14 +309,113 @@ test("a confirmed packet replaces the same client and removes the old packet fil
   }
 });
 
-test("uploaded supporting documents are included when the packet is rebuilt", async () => {
+test("standard packet document choices are reversible and scoped to a workspace", async () => {
+  const t = setup();
+  const a = await account(t, "packet-settings-a@example.com");
+  const b = await account(t, "packet-settings-b@example.com");
+  const newcomer = await account(t, "packet-settings-new@example.com");
+  await a.mutation(api.workspaces.create, company("Packet A"));
+  await b.mutation(api.workspaces.create, company("Packet B"));
+  expect(await a.query(api.settings.getExcludedPacketDocuments)).toEqual([]);
+  await expect(t.mutation(api.settings.setPacketDocumentIncluded, { key: "invoice", included: false })).rejects.toThrow("Not authenticated");
+  await expect(newcomer.mutation(api.settings.setPacketDocumentIncluded, { key: "invoice", included: false })).rejects.toThrow("Create a workspace");
+  for (const { key } of STANDARD_PACKET_DOCUMENTS) {
+    await a.mutation(api.settings.setPacketDocumentIncluded, { key, included: false });
+    await a.mutation(api.settings.setPacketDocumentIncluded, { key, included: false });
+  }
+  expect(await a.query(api.settings.getExcludedPacketDocuments)).toEqual(STANDARD_PACKET_DOCUMENTS.map(doc => doc.key));
+  expect(await b.query(api.settings.getExcludedPacketDocuments)).toEqual([]);
+  const { _id, _creationTime, workspaceId, ...contractor } = (await a.query(api.settings.getSettings))!;
+  await a.mutation(api.settings.updateSettings, { ...contractor, contractorName: "Updated Contractor" });
+  expect(await a.query(api.settings.getExcludedPacketDocuments)).toHaveLength(6);
+  for (const { key } of STANDARD_PACKET_DOCUMENTS) {
+    await a.mutation(api.settings.setPacketDocumentIncluded, { key, included: true });
+  }
+  expect(await a.query(api.settings.getExcludedPacketDocuments)).toEqual([]);
+});
+
+test("new packets apply standard document additions and deletions while existing packets keep their files", async () => {
+  const t = setup();
+  const a = await account(t, "packet-contents-a@example.com");
+  const b = await account(t, "packet-contents-b@example.com");
+  const workspaceId = await a.mutation(api.workspaces.create, company("Packet Contents"));
+  await b.mutation(api.workspaces.create, company("Other Packet Contents"));
+  const pdfFile = async (size: [number, number] = [612, 792]) => {
+    const pdf = await PDFDocument.create();
+    pdf.addPage(size);
+    const bytes = await pdf.save();
+    const storageId = await t.run(ctx => ctx.storage.store(new Blob([bytes as BlobPart], { type: "application/pdf" })));
+    await t.mutation(internal.uploads.registerGenerated, { storageId, workspaceId });
+    return storageId;
+  };
+  const templateId = await pdfFile();
+  await t.run(ctx => ctx.db.insert("pdfTemplates", {
+    workspaceId, key: "construction-contract-4draw", storageId: templateId, uploadedAt: 1, fieldMap: {},
+  }));
+  const extraId = await a.mutation(api.customDocuments.registerCustomDocument, {
+    category: "packet-document", storageId: await pdfFile([700, 900]), displayName: "Standard notice",
+  });
+  expect(await b.query(api.customDocuments.listCustomDocuments, { category: "packet-document" })).toEqual([]);
+  await expect(b.query(api.customDocuments.getCustomDocument, { id: extraId })).rejects.toThrow("workspace");
+  await expect(b.mutation(api.customDocuments.deleteCustomDocument, { id: extraId })).rejects.toThrow("workspace");
+  await expect(a.mutation(api.bundles.createBundle, {
+    name: "No standard documents in bundles", description: "",
+    items: [{ description: "Ramp", quantity: 1, unitPriceCents: 100 }], documentIds: [extraId],
+  })).rejects.toThrow("cannot be added");
+
+  for (const { key } of STANDARD_PACKET_DOCUMENTS) {
+    if (key !== "invoice" && key !== "construction-stage-completion") {
+      await a.mutation(api.settings.setPacketDocumentIncluded, { key, included: false });
+    }
+  }
+  const { invoiceDate, ...clientData } = invoice;
+  const input = {
+    ...clientData, drawCount: 4 as const,
+    lineItems: [100, 300, 600].map((amount, index) => ({ description: `Construction ${index + 1}`, qty: 1, unitPrice: amount, amount })),
+    invoiceStorageId: await pdfFile(), waiverIds: [], specSheetIds: [], jobSpecificIds: [],
+  };
+  const original = await a.action(api.packets.generatePacket, input);
+  const originalFiles = await a.query(api.clientFiles.listClientFiles, { clientId: original.clientId });
+  expect(originalFiles.map(doc => doc.filename)).toEqual([
+    "Construction Contract (4-draw).pdf",
+    ...[1, 2, 3, 4].map(draw => `Construction Stage Completion (Draw ${draw}).pdf`),
+    "Invoice.pdf", "Standard notice.pdf",
+  ]);
+  for (const { key } of STANDARD_PACKET_DOCUMENTS) {
+    await a.mutation(api.settings.setPacketDocumentIncluded, { key, included: false });
+  }
+  const reduced = await a.action(api.packets.generatePacket, { ...input, name: "Reduced packet", caseNumber: "reduced" });
+  expect((await a.query(api.clientFiles.listClientFiles, { clientId: reduced.clientId })).map(doc => doc.filename))
+    .toEqual(["Construction Contract (4-draw).pdf", "Standard notice.pdf"]);
+
+  await a.mutation(api.customDocuments.deleteCustomDocument, { id: extraId });
+  const rebuilt = await a.action(api.packets.regeneratePacket, { clientId: original.clientId });
+  const bytes = await t.run(async ctx => (await ctx.storage.get(rebuilt.packetStorageId))!.arrayBuffer());
+  const pdf = await PDFDocument.load(bytes);
+  expect(pdf.getPageCount()).toBe(7);
+  expect(pdf.getPage(6).getSize()).toEqual({ width: 700, height: 900 });
+
+  await a.mutation(api.settings.setPacketDocumentIncluded, { key: "payment-schedule", included: true });
+  await a.mutation(api.settings.setPacketDocumentIncluded, { key: "invoice", included: true });
+  const nextInput = { ...input, name: "Restored packet", caseNumber: "restored" };
+  await expect(a.action(api.packets.generatePacket, nextInput)).rejects.toThrow("payment-schedule-4draw");
+  const scheduleId = await pdfFile();
+  await t.run(ctx => ctx.db.insert("pdfTemplates", {
+    workspaceId, key: "payment-schedule-4draw", storageId: scheduleId, uploadedAt: 1, fieldMap: {},
+  }));
+  const restored = await a.action(api.packets.generatePacket, nextInput);
+  expect((await a.query(api.clientFiles.listClientFiles, { clientId: restored.clientId })).map(doc => doc.filename))
+    .toEqual(["Construction Contract (4-draw).pdf", "Invoice.pdf", "Payment Schedule (4-draw).pdf"]);
+});
+
+test("packet rebuilds merge supporting documents sequentially and preserve plan sizes", async () => {
   const t = setup();
   const a = await account(t, "packet-documents@example.com");
   const workspaceId = await a.mutation(api.workspaces.create, company("Packet Documents"));
 
-  const pdfFile = async (label: string) => {
+  const pdfFile = async (label: string, size: [number, number] = [612, 792]) => {
     const pdf = await PDFDocument.create();
-    const page = pdf.addPage([612, 792]);
+    const page = pdf.addPage(size);
     page.drawText(label, { x: 40, y: 750 });
     const bytes = await pdf.save();
     const storageId = await t.run((ctx) =>
@@ -327,9 +427,9 @@ test("uploaded supporting documents are included when the packet is rebuilt", as
 
   const originalPacketId = await pdfFile("Original packet");
   const generatedId = await pdfFile("Generated contract");
-  const planId = await pdfFile("House plans");
+  const planId = await pdfFile("House plans", [2592, 1728]);
   const builderSpecId = await pdfFile("Builder spec sheet");
-  const additionalSpecId = await pdfFile("Additional spec sheet");
+  const additionalSpecId = await pdfFile("Additional spec sheet", [792, 612]);
   const { invoiceDate, ...clientData } = invoice;
   const clientId = await a.mutation(api.clients.createClient, {
     ...clientData,
@@ -352,7 +452,25 @@ test("uploaded supporting documents are included when the packet is rebuilt", as
   }
 
   expect((await a.query(api.clients.getClient, { clientId }))?.packetDirty).toBe(true);
-  const { packetStorageId } = await a.action(api.packets.regeneratePacket, { clientId });
+  // Guard the memory invariant in the actual rebuild path: the current PDF's
+  // pages must be copied before the next source is parsed.
+  const loadPdf = vi.spyOn(PDFDocument, "load");
+  const copyPages = vi.spyOn(PDFDocument.prototype, "copyPages");
+  let packetStorageId: Id<"_storage">;
+  try {
+    ({ packetStorageId } = await a.action(api.packets.regeneratePacket, { clientId }));
+    expect(loadPdf).toHaveBeenCalledTimes(4);
+    expect(copyPages).toHaveBeenCalledTimes(4);
+    for (let i = 0; i < 4; i++) {
+      expect(loadPdf.mock.invocationCallOrder[i]).toBeLessThan(copyPages.mock.invocationCallOrder[i]!);
+      if (i < 3) {
+        expect(copyPages.mock.invocationCallOrder[i]).toBeLessThan(loadPdf.mock.invocationCallOrder[i + 1]!);
+      }
+    }
+  } finally {
+    loadPdf.mockRestore();
+    copyPages.mockRestore();
+  }
   expect((await a.query(api.clients.getClient, { clientId }))?.packetDirty).toBe(false);
   expect((await a.query(api.clientFiles.listClientFiles, { clientId })).map((file) => file.filename))
     .toEqual(["Contract.pdf", "House plans.pdf", "Builder spec sheet.pdf", "Additional spec sheet.pdf"]);
@@ -362,6 +480,22 @@ test("uploaded supporting documents are included when the packet is rebuilt", as
   expect(mergedBytes).not.toBeNull();
   const pdf = await PDFDocument.load(mergedBytes!);
   expect(pdf.getPageCount()).toBe(4);
+  expect(pdf.getPages().map(page => page.getSize())).toEqual([
+    { width: 612, height: 792 },
+    { width: 2592, height: 1728 },
+    { width: 612, height: 792 },
+    { width: 792, height: 612 },
+  ]);
+
+  const invalidId = await file(t, workspaceId);
+  await a.mutation(api.clientFiles.addClientFile, {
+    clientId, storageId: invalidId, filename: "Broken attachment.pdf", type: "uploaded",
+  });
+  await expect(a.action(api.packets.regeneratePacket, { clientId })).rejects.toThrow();
+  expect(await a.query(api.clients.getClient, { clientId })).toMatchObject({
+    packetStorageId, packetDirty: true,
+  });
+  expect(await t.run(async ctx => (await ctx.storage.get(packetStorageId)) !== null)).toBe(true);
 });
 
 test("files cannot be parsed, attached, imported or registered in another workspace", async () => {
@@ -409,7 +543,7 @@ test("files cannot be parsed, attached, imported or registered in another worksp
 });
 
 test.each(["waiver", "spec-sheet", "job-specific"] as const)(
-  "%s library documents are shared for existing and new workspaces, with deletion limited to the uploader",
+  "%s library documents can be viewed and deleted across workspaces",
   async category => {
     const t = setup();
     const a = await account(t, "a@example.com");
@@ -448,14 +582,23 @@ test.each(["waiver", "spec-sheet", "job-specific"] as const)(
       }
     }
     expect(await b.action(api.customDocuments.inspectCustomDocument, { id: aId })).toEqual([]);
-    await expect(b.mutation(api.customDocuments.deleteCustomDocument, { id: aId })).rejects.toThrow("workspace");
-    await expect(a.mutation(api.customDocuments.deleteCustomDocument, { id: legacyId })).rejects.toThrow("workspace");
+    await expect(t.mutation(api.customDocuments.deleteCustomDocument, { id: aId })).rejects.toThrow("Not authenticated");
+    await expect(newcomer.mutation(api.customDocuments.deleteCustomDocument, { id: aId })).rejects.toThrow("Create a workspace");
     await expect(t.query(api.customDocuments.getCustomDocumentUrl, { id: aId })).rejects.toThrow("Not authenticated");
     await expect(newcomer.query(api.customDocuments.listCustomDocuments, { category })).rejects.toThrow("Create a workspace");
     // Sharing a library document does not grant access to arbitrary raw files.
     await expect(b.query(internal.uploads.checkFile, { storageId: stored.a })).rejects.toThrow("workspace");
-    await a.mutation(api.customDocuments.deleteCustomDocument, { id: aId });
+    await b.mutation(api.customDocuments.deleteCustomDocument, { id: aId });
     expect(await b.query(api.customDocuments.listCustomDocuments, { category })).toHaveLength(2);
+    await a.mutation(api.customDocuments.deleteCustomDocument, { id: legacyId });
+    expect((await a.query(api.customDocuments.listCustomDocuments, { category })).map(doc => doc._id)).toEqual([bId]);
+    await b.mutation(api.customDocuments.deleteCustomDocument, { id: bId });
+    expect(await a.query(api.customDocuments.listCustomDocuments, { category })).toEqual([]);
+    expect(await b.query(api.customDocuments.listCustomDocuments, { category })).toEqual([]);
+    for (const storageId of Object.values(stored)) {
+      expect(await t.run(async ctx => (await ctx.storage.get(storageId)) === null)).toBe(true);
+    }
+    await expect(b.mutation(api.customDocuments.deleteCustomDocument, { id: aId })).resolves.toBeNull();
   },
 );
 

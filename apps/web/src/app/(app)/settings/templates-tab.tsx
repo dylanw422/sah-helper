@@ -18,14 +18,18 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { BlankContractPreview, type BlankContract } from "@/components/blank-contract-preview";
 import { formatDate } from "@/lib/format";
+import { TEMPLATE_DISPLAY_NAMES } from "@sah-helper/backend/convex/lib/templateNames";
+import { STANDARD_PACKET_DOCUMENTS, type StandardPacketDocumentKey } from "@sah-helper/backend/convex/lib/templateKeys";
 
 type FieldInfo = { name: string; type: string };
-type Category = "contract" | "waiver" | "spec-sheet" | "job-specific";
+type Category = "contract" | "packet-document" | "waiver" | "spec-sheet" | "job-specific";
 type PendingUpload = { kind: "slot"; key: string } | { kind: "custom"; category: Category };
 
 const ADD_LABELS: Record<Category, string> = {
   contract: "Add Contract",
+  "packet-document": "Add Document",
   waiver: "Add Waiver",
   "spec-sheet": "Add Spec Sheet",
   "job-specific": "Add Job-Specific Document",
@@ -35,7 +39,8 @@ export function TemplatesTab() {
   const convex = useConvex();
   const templates = useQuery(api.templates.listTemplates);
   const customDocs = useQuery(api.customDocuments.listCustomDocuments, {});
-  const workspace = useQuery(api.workspaces.current);
+  const excludedDocuments = useQuery(api.settings.getExcludedPacketDocuments);
+  const setPacketDocumentIncluded = useMutation(api.settings.setPacketDocumentIncluded);
   const generateUploadUrl = useMutation(api.templates.generateTemplateUploadUrl);
   const registerTemplate = useMutation(api.templates.registerTemplate);
   const registerCustomDocument = useMutation(api.customDocuments.registerCustomDocument);
@@ -46,11 +51,14 @@ export function TemplatesTab() {
   const [fields, setFields] = useState<Record<string, FieldInfo[]>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Doc<"customDocuments"> | null>(null);
+  const [pendingStandardDelete, setPendingStandardDelete] = useState<(typeof STANDARD_PACKET_DOCUMENTS)[number] | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [previewContract, setPreviewContract] = useState<BlankContract | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef<PendingUpload | null>(null);
 
   const customContracts = (customDocs ?? []).filter((d) => d.category === "contract");
+  const standardDocuments = (customDocs ?? []).filter((d) => d.category === "packet-document");
   const waivers = (customDocs ?? []).filter((d) => d.category === "waiver");
   const specSheets = (customDocs ?? []).filter((d) => d.category === "spec-sheet");
   const jobSpecificDocs = (customDocs ?? []).filter((d) => d.category === "job-specific");
@@ -139,7 +147,7 @@ export function TemplatesTab() {
   };
 
   const handleDelete = async () => {
-    if (!pendingDelete) return;
+    if (!pendingDelete || deleting) return;
     setDeleting(true);
     try {
       await deleteCustomDocument({ id: pendingDelete._id });
@@ -153,6 +161,20 @@ export function TemplatesTab() {
       toast.error(e instanceof Error ? e.message : "Delete failed");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const changeStandardDocument = async (key: StandardPacketDocumentKey, included: boolean) => {
+    if (busyKey !== null) return;
+    setBusyKey(`standard:${key}`);
+    try {
+      await setPacketDocumentIncluded({ key, included });
+      setPendingStandardDelete(null);
+      toast.success(included ? "Document added to future packets." : "Document removed from future packets.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update packet documents.");
+    } finally {
+      setBusyKey(null);
     }
   };
 
@@ -210,12 +232,12 @@ export function TemplatesTab() {
       <Badge variant="amber">Mapping fields…</Badge>
     );
 
-  const immutableSection = (title: string, docs: Doc<"customDocuments">[], category: Category) => (
+  const sharedSection = (title: string, docs: Doc<"customDocuments">[], category: Category) => (
     <section className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
       <div className="border-b border-border px-5 py-4">
         <h3 className="text-sm font-semibold">{title}</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Shared across workspaces. The uploading workspace can remove its documents.
+          Shared across workspaces. Deleting a document removes it for everyone.
         </p>
       </div>
       <div>
@@ -245,15 +267,17 @@ export function TemplatesTab() {
                         <EyeIcon data-icon="inline-start" />
                         View
                       </Button>
-                      {(doc.workspaceId ?? "legacy") === workspace?.id ? <Button
+                      <Button
                         variant="outline"
                         size="xs"
                         aria-label={`Delete ${doc.displayName}`}
-                        disabled={busyKey !== null}
+                        title={`Delete ${doc.displayName}`}
+                        disabled={busyKey !== null || deleting}
                         onClick={() => setPendingDelete(doc)}
                       >
-                        <Trash2Icon className="size-3.5 text-destructive" />
-                      </Button> : null}
+                        <Trash2Icon data-icon="inline-start" className="text-destructive" />
+                        Delete
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -264,6 +288,56 @@ export function TemplatesTab() {
         {addButton(category)}
       </div>
     </section>
+  );
+
+  const templateRow = (t: NonNullable<typeof templates>[number]) => (
+    <TableRow key={t.key}>
+      <TableCell className="text-xs">{TEMPLATE_DISPLAY_NAMES[t.key]}</TableCell>
+      <TableCell>
+        {!t.uploaded ? (
+          <Badge variant="amber">Missing</Badge>
+        ) : t.fieldMap ? (
+          <Badge variant="green">
+            Mapped {Object.keys(t.fieldMap).length} fields
+            {t.uploadedAt ? ` · ${formatDate(t.uploadedAt)}` : ""}
+          </Badge>
+        ) : (
+          <Badge variant="amber">Mapping fields…</Badge>
+        )}
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={!t.uploaded || busyKey !== null}
+            aria-label={`View blank ${t.key}`}
+            onClick={() => setPreviewContract({ kind: "template", key: t.key })}
+          >
+            <EyeIcon data-icon="inline-start" />
+            View
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={busyKey !== null}
+            onClick={() => triggerFilePicker({ kind: "slot", key: t.key })}
+          >
+            <UploadIcon data-icon="inline-start" />
+            {t.uploaded ? "Replace" : "Upload"}
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={!t.uploaded || busyKey !== null}
+            onClick={() => handleInspect(t.key)}
+          >
+            <SearchIcon data-icon="inline-start" />
+            {busyKey === t.key ? "Working..." : "Inspect"}
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
   );
 
   return (
@@ -288,7 +362,7 @@ export function TemplatesTab() {
         <div className="border-b border-border px-5 py-4">
           <h3 className="text-sm font-semibold">Contracts</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Upload blank VA templates or custom contracts. Fields are mapped automatically; use Inspect to review them.
+            Manage construction contracts and any custom contracts included in every packet. Use View to download a blank copy.
           </p>
         </div>
         <div>
@@ -301,51 +375,23 @@ export function TemplatesTab() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(templates ?? []).map((t) => (
-                <TableRow key={t.key}>
-                  <TableCell className="font-mono text-[11px]">{t.key}.pdf</TableCell>
-                  <TableCell>
-                    {!t.uploaded ? (
-                      <Badge variant="amber">Missing</Badge>
-                    ) : t.fieldMap ? (
-                      <Badge variant="green">
-                        Mapped {Object.keys(t.fieldMap).length} fields
-                        {t.uploadedAt ? ` · ${formatDate(t.uploadedAt)}` : ""}
-                      </Badge>
-                    ) : (
-                      <Badge variant="amber">Mapping fields…</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        size="xs"
-                        disabled={busyKey !== null}
-                        onClick={() => triggerFilePicker({ kind: "slot", key: t.key })}
-                      >
-                        <UploadIcon data-icon="inline-start" />
-                        {t.uploaded ? "Replace" : "Upload"}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="xs"
-                        disabled={!t.uploaded || busyKey !== null}
-                        onClick={() => handleInspect(t.key)}
-                      >
-                        <SearchIcon data-icon="inline-start" />
-                        {busyKey === t.key ? "Working..." : "Inspect"}
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {(templates ?? []).filter(t => t.key.startsWith("construction-contract-")).map(templateRow)}
               {customContracts.map((doc) => (
                 <TableRow key={doc._id}>
                   <TableCell className="font-mono text-[11px]">{doc.displayName}.pdf</TableCell>
                   <TableCell>{mappingBadge(doc)}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        disabled={busyKey !== null}
+                        aria-label={`View blank ${doc.displayName}`}
+                        onClick={() => setPreviewContract({ kind: "custom", id: doc._id, name: doc.displayName })}
+                      >
+                        <EyeIcon data-icon="inline-start" />
+                        View
+                      </Button>
                       <Button
                         variant="outline"
                         size="xs"
@@ -374,9 +420,76 @@ export function TemplatesTab() {
         </div>
       </section>
 
-      {immutableSection("Waivers", waivers, "waiver")}
-      {immutableSection("Spec Sheets", specSheets, "spec-sheet")}
-      {immutableSection("Job-Specific Documents", jobSpecificDocs, "job-specific")}
+      <section className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+        <div className="border-b border-border px-5 py-4">
+          <h3 className="text-sm font-semibold">Standard packet documents</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Add or remove documents included in every new packet for your workspace. Existing packets keep their copies.
+          </p>
+        </div>
+        <Table className="min-w-[650px]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Document</TableHead>
+              <TableHead>Included</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {STANDARD_PACKET_DOCUMENTS.filter(doc => !excludedDocuments?.includes(doc.key)).map(doc => (
+              <TableRow key={doc.key}>
+                <TableCell className="text-xs font-medium">{doc.name}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{doc.detail}</TableCell>
+                <TableCell className="text-right">
+                  <Button variant="outline" size="xs" aria-label={`Delete ${doc.name}`}
+                    disabled={excludedDocuments === undefined || busyKey !== null || deleting}
+                    onClick={() => setPendingStandardDelete(doc)}>
+                    <Trash2Icon data-icon="inline-start" className="text-destructive" />
+                    Delete
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {standardDocuments.map(doc => (
+              <TableRow key={doc._id}>
+                <TableCell className="text-xs font-medium">{doc.displayName}.pdf</TableCell>
+                <TableCell className="text-xs text-muted-foreground">Every packet · {formatDate(doc.uploadedAt)}</TableCell>
+                <TableCell className="text-right">
+                  <Button variant="outline" size="xs" aria-label={`Delete ${doc.displayName}`}
+                    disabled={busyKey !== null || deleting} onClick={() => setPendingDelete(doc)}>
+                    <Trash2Icon data-icon="inline-start" className="text-destructive" />
+                    Delete
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {excludedDocuments?.length === STANDARD_PACKET_DOCUMENTS.length && standardDocuments.length === 0 && (
+              <TableRow><TableCell colSpan={3} className="py-5 text-xs text-muted-foreground">No standard documents included. Add a document below.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border bg-surface-overlay/40 px-4 py-3">
+          {!!excludedDocuments?.length && (
+            <select aria-label="Add a built-in packet document" value="" disabled={busyKey !== null || deleting}
+              className="h-7 max-w-full rounded-md border border-border bg-background px-2 text-xs"
+              onChange={event => { if (event.target.value) void changeStandardDocument(event.target.value as StandardPacketDocumentKey, true); }}>
+              <option value="" disabled>Add a built-in document...</option>
+              {STANDARD_PACKET_DOCUMENTS.filter(doc => excludedDocuments.includes(doc.key)).map(doc => (
+                <option key={doc.key} value={doc.key}>{doc.name}</option>
+              ))}
+            </select>
+          )}
+          <Button variant="outline" size="xs" disabled={busyKey !== null || deleting}
+            onClick={() => triggerFilePicker({ kind: "custom", category: "packet-document" })}>
+            <UploadIcon data-icon="inline-start" />
+            {busyKey === "add:packet-document" ? "Uploading..." : "Add Document"}
+          </Button>
+        </div>
+      </section>
+
+      {sharedSection("Waivers", waivers, "waiver")}
+      {sharedSection("Spec Sheets", specSheets, "spec-sheet")}
+      {sharedSection("Job-Specific Documents", jobSpecificDocs, "job-specific")}
 
       {Object.keys(fields).length > 0 && (
         <div className="space-y-4 pt-2">
@@ -422,10 +535,29 @@ export function TemplatesTab() {
         </div>
       )}
 
+      {previewContract && (
+        <BlankContractPreview
+          contract={previewContract}
+          onClose={() => setPreviewContract(null)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={pendingStandardDelete !== null}
+        title={`Delete ${pendingStandardDelete?.name ?? "this document"}?`}
+        description="This removes the document from future packets for your workspace. Existing packets keep their copies. You can add it back in this section."
+        confirmLabel="Delete"
+        confirming={busyKey !== null}
+        onConfirm={() => { if (pendingStandardDelete) void changeStandardDocument(pendingStandardDelete.key, false); }}
+        onCancel={() => { if (busyKey === null) setPendingStandardDelete(null); }}
+      />
+
       <ConfirmDialog
         open={pendingDelete !== null}
         title={`Delete ${pendingDelete?.displayName ?? "this document"}?`}
-        description="The file is removed from the library. Packets that were already generated keep their own copy."
+        description={pendingDelete?.category === "contract" || pendingDelete?.category === "packet-document"
+          ? "The file is removed from the library. Packets that were already generated keep their own copy."
+          : "The file is removed from the shared library for all workspaces. Packets that were already generated keep their own copy."}
         confirmLabel="Delete"
         confirming={deleting}
         onConfirm={handleDelete}

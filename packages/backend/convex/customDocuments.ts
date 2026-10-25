@@ -18,6 +18,7 @@ import schema from "./schema";
 
 const categoryValidator = v.union(
   v.literal("contract"),
+  v.literal("packet-document"),
   v.literal("waiver"),
   v.literal("spec-sheet"),
   v.literal("job-specific"),
@@ -29,7 +30,7 @@ function assertDocumentReadable(
   doc: Doc<"customDocuments"> | null,
   workspaceId?: Id<"workspaces">,
 ) {
-  if (!doc || doc.category === "contract") assertWorkspace(doc, workspaceId);
+  if (!doc || doc.category === "contract" || doc.category === "packet-document") assertWorkspace(doc, workspaceId);
 }
 
 async function listVisibleDocuments(
@@ -37,9 +38,9 @@ async function listVisibleDocuments(
   workspaceId: Id<"workspaces"> | undefined,
   category?: Doc<"customDocuments">["category"],
 ) {
-  const categories = category ? [category] : ["contract" as const, ...sharedCategories];
+  const categories = category ? [category] : ["contract" as const, "packet-document" as const, ...sharedCategories];
   const groups = await Promise.all(categories.map(category =>
-    category === "contract"
+    category === "contract" || category === "packet-document"
       ? ctx.db.query("customDocuments")
           .withIndex("by_workspaceId_and_category", q =>
             q.eq("workspaceId", workspaceId).eq("category", category))
@@ -68,6 +69,12 @@ export const registerCustomDocument = mutation({
   handler: async (ctx, args) => {
     const workspaceId = await requireAuth(ctx);
     await requireFile(ctx, args.storageId, workspaceId);
+    if (args.category === "packet-document") {
+      const existing = await ctx.db.query("customDocuments")
+        .withIndex("by_workspaceId_and_category", q => q.eq("workspaceId", workspaceId).eq("category", "packet-document"))
+        .take(100);
+      if (existing.length >= 100) throw new Error("A workspace can include at most 100 additional standard packet documents.");
+    }
     const id = await ctx.db.insert("customDocuments", {
       workspaceId,
       category: args.category,
@@ -88,13 +95,17 @@ export const registerCustomDocument = mutation({
 
 export const deleteCustomDocument = mutation({
   args: { id: v.id("customDocuments") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const workspaceId = await requireAuth(ctx);
     const doc = await ctx.db.get(args.id);
-    assertWorkspace(doc, workspaceId);
-    if (!doc) return;
+    if (!doc) return null;
+    // Members can manage the same shared documents they can view. Custom
+    // contracts and additional standard packet documents remain private.
+    assertDocumentReadable(doc, workspaceId);
     await ctx.storage.delete(doc.storageId);
     await ctx.db.delete(args.id);
+    return null;
   },
 });
 
