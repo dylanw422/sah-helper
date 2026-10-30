@@ -156,8 +156,8 @@ export function layoutDimensions(dimensions: Dimension[], scale = 1, fixedObstac
   return visible.map(dim => layouts.get(dim.id)!);
 }
 
-// Auto dimensions are displayed outside only; keep interior measurements in
-// the model for geometry and editing without drawing their lines or labels.
+// Auto dimensions stay outside, with doorway widths centered in their openings.
+// Other interior measurements remain in the model without being drawn.
 export function displayedDimensionLayout(dimensions: Dimension[], scale = 1): DimensionLayout[] {
-  return layoutDimensions(dimensions.filter(dim => !dim.interior), scale);
+  return layoutDimensions(dimensions.filter(dim => !dim.interior || dim.doorway), scale);
 }

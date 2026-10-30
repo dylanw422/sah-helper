@@ -153,10 +153,25 @@ describe("opposite interior dimensions", () => {
     const perpendicular = { ...duplicate, id: "perpendicular", a: { x: 180, y: 30 }, b: { x: 180, y: 150 } };
     expect(displayedDimensionLayout([exterior, duplicate, separate, perpendicular]).map(mark => mark.dimension.id)).toEqual(["exterior"]);
   });
-  test("doorway widths and small-room interior measurements stay hidden at every zoom", () => {
+  test("doorway widths stay centered in openings while other interior measurements stay hidden", () => {
     const p = rectangle();
-    p.openings = [{ id: "hallway", wallId: "w0", kind: "opening", t: .5, width: 36, flip: false }];
-    expect(displayedDimensionLayout(automaticDimensions(p)).some(mark => mark.dimension.doorway)).toBe(false);
+    p.walls.push(wall("partition", { x: 120, y: 0 }, { x: 120, y: 180 }, "interior"));
+    p.openings = [
+      { id: "door", wallId: "w0", kind: "door", t: .25, width: 36, flip: false },
+      { id: "hallway", wallId: "partition", kind: "opening", t: .5, width: 30, flip: false },
+    ];
+    for (const scale of [.7, 1, 5]) {
+      const marks = displayedDimensionLayout(automaticDimensions(p), scale);
+      expect(marks.filter(mark => mark.dimension.interior && !mark.dimension.doorway)).toHaveLength(0);
+      for (const opening of p.openings) {
+        const widths = marks.filter(mark => mark.dimension.doorway && mark.dimension.openingId === opening.id);
+        expect(widths).toHaveLength(1);
+        expect(widths[0].dimension.value).toBe(opening.width);
+        expect(widths[0].dimension.offset).toBe(0);
+        expect(widths[0].dimension.hideLabel).not.toBe(true);
+        expect(widths[0].labelBounds).toBeDefined();
+      }
+    }
     const small = rectangle(36, 42);
     for (const scale of [.7, 1, 5]) {
       const marks = displayedDimensionLayout(automaticDimensions(small), scale), labels = marks.filter(mark => mark.labelBounds);
