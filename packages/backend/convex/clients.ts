@@ -1,3 +1,4 @@
+import { synchronizeDrawStages } from "./lib/fieldSchedule";
 import { requireFile } from "./lib/files";
 import { ConvexError, v } from "convex/values";
 
@@ -6,7 +7,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
 import { assertWorkspace } from "./lib/workspaces";
-import { lineItemValidator } from "./schema";
+import { lineItemValidator, drawWorkStageValidator } from "./schema";
+import { internal } from "./_generated/api";
 
 function normalized(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
@@ -54,6 +56,7 @@ export const saveGeneratedPacket = internalMutation({
     caseNumber: v.string(),
     drawCount: v.union(v.literal(4), v.literal(5), v.literal(6)),
     lineItems: v.array(lineItemValidator),
+    drawWorkSchedule: v.optional(v.array(drawWorkStageValidator)),
     subtotal: v.number(),
     total: v.number(),
     packetStorageId: v.id("_storage"),
@@ -101,11 +104,15 @@ export const saveGeneratedPacket = internalMutation({
       }
       await ctx.db.patch(existing._id, {
         ...data,
+        drawWorkSchedule: data.drawWorkSchedule,
         status: "unsigned",
         packetDirty: false,
         updatedAt: now,
       });
       clientId = existing._id;
+      if ((await ctx.db.query("projectStages").withIndex("by_clientId_and_order", q => q.eq("clientId", clientId)).take(1)).length) {
+        await synchronizeDrawStages(ctx, (await ctx.db.get(clientId))!);
+      }
     } else {
       clientId = await ctx.db.insert("clients", {
         workspaceId,
@@ -237,6 +244,7 @@ export const deleteClient = mutation({
     if (plans.length > 100) throw new ConvexError("Too many plans to delete in one operation.");
     for (const plan of plans) await ctx.db.delete(plan._id);
     await ctx.db.delete(args.clientId);
+    await ctx.scheduler.runAfter(0, internal.field.cleanupDeletedProject, { clientId: args.clientId });
   },
 });
 

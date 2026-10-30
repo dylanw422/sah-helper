@@ -14,7 +14,68 @@ export const standardPacketDocumentKeyValidator = v.union(
   v.literal("invoice"), v.literal("payment-schedule"),
 );
 
+export const fieldStageStatus = v.union(v.literal("not_started"), v.literal("in_progress"),
+  v.literal("submitted"), v.literal("verified"), v.literal("changes_requested"));
+export const drawWorkStageValidator = v.object({ drawNumber: v.number(), items: v.array(v.object({ lineItemIndex: v.number(), description: v.string() })) });
+
 export default defineSchema({
+  fieldProjectLinks: defineTable({
+    workspaceId: v.optional(v.id("workspaces")), clientId: v.id("clients"),
+    label: v.string(), tokenHash: v.string(), createdAt: v.number(), revokedAt: v.optional(v.number()),
+  }).index("by_tokenHash", ["tokenHash"]).index("by_clientId", ["clientId"]),
+  // Retain records from the earlier account invitation flow; project access
+  // now uses fieldProjectLinks exclusively.
+  fieldUsers: defineTable({
+    authUserId: v.string(), email: v.string(), name: v.string(), createdAt: v.number(),
+  }).index("by_authUserId", ["authUserId"]),
+  fieldAssignments: defineTable({
+    workspaceId: v.optional(v.id("workspaces")), clientId: v.id("clients"),
+    fieldUserId: v.id("fieldUsers"), active: v.boolean(), assignedAt: v.number(),
+  }).index("by_clientId", ["clientId"])
+    .index("by_fieldUserId_and_active", ["fieldUserId", "active"])
+    .index("by_clientId_and_fieldUserId", ["clientId", "fieldUserId"]),
+  fieldInvitations: defineTable({
+    workspaceId: v.optional(v.id("workspaces")), clientId: v.id("clients"),
+    email: v.string(), tokenHash: v.string(), expiresAt: v.number(), createdAt: v.number(),
+    acceptedBy: v.optional(v.id("fieldUsers")), revokedAt: v.optional(v.number()),
+  }).index("by_tokenHash", ["tokenHash"]).index("by_clientId", ["clientId"]),
+  projectStages: defineTable({
+    workspaceId: v.optional(v.id("workspaces")), clientId: v.id("clients"),
+    title: v.string(), instructions: v.string(), order: v.number(), status: fieldStageStatus,
+    dueDate: v.optional(v.string()), blocker: v.optional(v.string()),
+    reviewNote: v.optional(v.string()), updatedAt: v.number(),
+    drawNumber: v.optional(v.number()), scheduleKey: v.optional(v.string()), archived: v.optional(v.boolean()),
+  }).index("by_clientId_and_order", ["clientId", "order"]),
+  projectTasks: defineTable({
+    clientId: v.id("clients"), stageId: v.id("projectStages"), label: v.string(),
+    kind: v.union(v.literal("field"), v.literal("office")), requiresPhoto: v.boolean(),
+    order: v.number(), completed: v.boolean(), updatedAt: v.number(),
+    completedBy: v.optional(v.string()),
+    scheduleItemKey: v.optional(v.string()), retired: v.optional(v.boolean()),
+  }).index("by_stageId_and_order", ["stageId", "order"]).index("by_clientId", ["clientId"]),
+  projectFiles: defineTable({
+    workspaceId: v.optional(v.id("workspaces")), clientId: v.id("clients"),
+    stageId: v.optional(v.id("projectStages")), taskId: v.optional(v.id("projectTasks")),
+    storageId: v.id("_storage"), filename: v.string(), contentType: v.string(),
+    kind: v.union(v.literal("photo"), v.literal("document")),
+    uploadedBy: v.string(), uploadedByName: v.string(), createdAt: v.number(),
+  }).index("by_clientId", ["clientId"]).index("by_taskId", ["taskId"]),
+  fieldUploadTickets: defineTable({
+    tokenHash: v.string(), clientId: v.id("clients"), taskId: v.id("projectTasks"),
+    authUserId: v.string(), actorName: v.string(), filename: v.string(),
+    fieldUserId: v.optional(v.id("fieldUsers")), officeMemberId: v.optional(v.id("authorizedUsers")),
+    projectLinkId: v.optional(v.id("fieldProjectLinks")),
+    expiresAt: v.number(),
+  }).index("by_tokenHash", ["tokenHash"]).index("by_clientId", ["clientId"]),
+  projectActivity: defineTable({
+    workspaceId: v.optional(v.id("workspaces")), clientId: v.id("clients"),
+    stageId: v.optional(v.id("projectStages")), actorId: v.string(), actorName: v.string(),
+    type: v.string(), message: v.string(), createdAt: v.number(),
+  }).index("by_clientId_and_createdAt", ["clientId", "createdAt"])
+    .index("by_workspaceId_and_createdAt", ["workspaceId", "createdAt"]),
+  projectNotificationReads: defineTable({
+    activityId: v.id("projectActivity"), authUserId: v.string(),
+  }).index("by_authUserId_and_activityId", ["authUserId", "activityId"]).index("by_activityId", ["activityId"]),
   packetDocumentSettings: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
     excludedDocuments: v.array(standardPacketDocumentKeyValidator),
@@ -51,6 +112,7 @@ export default defineSchema({
     caseNumber: v.optional(v.string()),
     drawCount: v.union(v.literal(4), v.literal(5), v.literal(6)),
     lineItems: v.array(lineItemValidator),
+    drawWorkSchedule: v.optional(v.array(drawWorkStageValidator)),
     subtotal: v.number(),
     total: v.number(),
     status: v.union(

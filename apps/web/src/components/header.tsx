@@ -1,8 +1,7 @@
 "use client";
 
 import { Button } from "@sah-helper/ui/components/button";
-import { FileTextIcon, PencilRulerIcon, SettingsIcon } from "lucide-react";
-import { motion } from "motion/react";
+import { PencilRulerIcon, SettingsIcon } from "lucide-react";
 import Link from "next/link";
 import { api } from "@sah-helper/backend/convex/_generated/api";
 import { useQuery } from "convex/react";
@@ -10,6 +9,7 @@ import { useQuery } from "convex/react";
 import { useScrollOpacity } from "@/hooks/use-scroll-opacity";
 
 import UserMenu from "./user-menu";
+import { AppBrand } from "./app-brand";
 
 export default function Header() {
   const scrollOpacity = useScrollOpacity();
@@ -22,23 +22,7 @@ export default function Header() {
         style={{ opacity: scrollOpacity }}
       />
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4">
-        <Link href="/dashboard" className="group flex items-center gap-2.5">
-          <motion.div
-            whileHover={{ rotate: 12, scale: 1.08 }}
-            transition={{ type: "spring", stiffness: 500, damping: 22 }}
-            className="flex size-7 items-center justify-center rounded-sm bg-indigo-500 shadow-[0_0_12px_-2px_rgb(99_102_241/0.6)]"
-          >
-            <FileTextIcon className="size-4 text-white" />
-          </motion.div>
-          <span className="text-[13px] font-semibold tracking-[-0.01em]">
-            SAH Helper
-          </span>
-          {workspace ? (
-            <span className="hidden max-w-56 truncate border-l pl-3 text-xs text-muted-foreground sm:block">
-              {workspace.name}
-            </span>
-          ) : null}
-        </Link>
+        <AppBrand href="/dashboard" workspaceName={workspace?.name} />
 
         <div className="flex items-center gap-1.5">
           <Link href="/floor-plans" aria-label="Floor plans" className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">

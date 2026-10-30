@@ -25,6 +25,7 @@ import { toast } from "sonner";
 
 import { ClientFileDrawer } from "@/components/client-file-drawer";
 import { ClientFloorPlans } from "@/components/floor-plan/client-floor-plans";
+import { OfficeFieldProject } from "@/components/field/office-project";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { StatusBadge } from "@/components/status-badge";
 import { usePacketDownload } from "@/lib/download";
@@ -166,6 +167,7 @@ export default function ClientDetailPage() {
       </div>
 
       <div className="space-y-6">
+        <OfficeFieldProject clientId={clientId} />
         <ClientFloorPlans clientId={clientId} />
         <Card>
           <CardHeader>

@@ -23,6 +23,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { ClientFileList } from "@/components/client-file-drawer";
+import { OfficeProjectUpdates } from "@/components/field/office-updates";
 import { StatusBadge } from "@/components/status-badge";
 import { usePacketDownload } from "@/lib/download";
 import { fadeUp, stagger } from "@/lib/motion";
@@ -155,6 +156,8 @@ export default function DashboardPage() {
           <p className="mt-2 text-xs text-muted-foreground">{clients === undefined ? "Loading clients" : `${counts.complete} of ${counts.all} clients`}</p>
         </motion.div>
       </motion.div>
+
+      <OfficeProjectUpdates />
 
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>

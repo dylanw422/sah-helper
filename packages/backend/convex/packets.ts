@@ -9,6 +9,7 @@ import { api, internal } from "./_generated/api";
 import { action } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { requireAuth } from "./lib/auth";
+import { drawWorkDescription, drawWorkFromSchedule } from "./lib/drawWorkSchedule";
 import { buildDrawSchedule, type DrawSchedule } from "./lib/drawSchedule";
 import { fillTemplate, mergeDocsIncrementally } from "./lib/pdf";
 import {
@@ -404,6 +405,7 @@ export const generatePacket = action({
         caseNumber: args.caseNumber,
         drawCount: args.drawCount,
         lineItems: args.lineItems,
+        drawWorkSchedule: drawWorkFromSchedule(schedule, args.lineItems),
         subtotal,
         total,
         packetStorageId,
@@ -477,11 +479,9 @@ function buildDrawFields(
   fields.finalDrawAmount = formatCurrency(
     schedule.drawAmounts[schedule.drawAmounts.length - 1],
   );
+  const work = drawWorkFromSchedule(schedule, lineItems);
   for (let i = 1; i <= 5; i++) {
-    const group = schedule.groups[i - 1];
-    fields[`draw${i}Description`] = group
-      ? group.map((idx) => lineItems[idx].description).join(", ")
-      : "";
+    fields[`draw${i}Description`] = work[i - 1] ? drawWorkDescription(work[i - 1]!) : "";
   }
   return fields as ReturnType<typeof buildDrawFields>;
 }
