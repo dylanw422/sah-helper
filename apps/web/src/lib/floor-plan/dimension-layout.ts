@@ -156,21 +156,8 @@ export function layoutDimensions(dimensions: Dimension[], scale = 1, fixedObstac
   return visible.map(dim => layouts.get(dim.id)!);
 }
 
-// Exterior labels supply the room's clear measurements whenever their
-// projected endpoints match. Keep different spans and actual doorway widths.
+// Auto dimensions are displayed outside only; keep interior measurements in
+// the model for geometry and editing without drawing their lines or labels.
 export function displayedDimensionLayout(dimensions: Dimension[], scale = 1): DimensionLayout[] {
-  const outside = layoutDimensions(dimensions.filter(dim => !dim.interior || dim.doorway), scale);
-  const measuredOutside = outside.filter(mark => !mark.dimension.interior && mark.labelBounds).map(mark => mark.dimension);
-  const covered = (dim: Dimension) => measuredOutside.some(other => {
-    if (Math.abs(other.value - dim.value) > .01) return false;
-    const length = distance(other.a, other.b), dimLength = distance(dim.a, dim.b);
-    const ux = (other.b.x - other.a.x) / length, uy = (other.b.y - other.a.y) / length;
-    if (Math.abs(ux * (dim.b.y - dim.a.y) - uy * (dim.b.x - dim.a.x)) / dimLength > .0001) return false;
-    const along = [dim.a, dim.b].map(p => (p.x - other.a.x) * ux + (p.y - other.a.y) * uy);
-    return Math.abs(Math.min(...along)) < .01 && Math.abs(Math.max(...along) - length) < .01;
-  });
-  const inside = layoutDimensions(dimensions.filter(dim => dim.interior && !dim.doorway && !covered(dim)), scale,
-    outside.flatMap(mark => mark.labelBounds ? [mark.labelBounds] : []));
-  const marks = new Map([...outside, ...inside].map(mark => [mark.dimension.id, mark]));
-  return dimensions.flatMap(dim => marks.has(dim.id) ? [marks.get(dim.id)!] : []);
+  return layoutDimensions(dimensions.filter(dim => !dim.interior), scale);
 }

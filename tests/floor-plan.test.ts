@@ -129,41 +129,40 @@ describe("opposite interior dimensions", () => {
       expect(JSON.stringify(dimensions)).toBe(before);
     }
   });
-  test("shorter interior spans opposite a longer exterior wall remain visible and editable", () => {
+  test("split interior spans stay hidden in every orientation without changing geometry", () => {
     for (const angle of [0, Math.PI / 4, Math.PI / 2]) for (const reverse of [false, true]) {
       const p = rectangle();
       p.walls[0].kind = "interior";
       const rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
       p.walls.push(wall("branch", { x: 120, y: 0 }, { x: 120, y: 60 }, "interior"));
       p.walls = p.walls.map(w => ({ ...w, a: rotate(reverse ? w.b : w.a), b: rotate(reverse ? w.a : w.b) }));
-      const inside = displayedDimensionLayout(automaticDimensions(p)).filter(mark => mark.dimension.interior && mark.labelBounds);
-      expect(inside.map(mark => Math.round(mark.dimension.value)).sort((a, b) => a - b)).toEqual([60, 114, 114]);
-      for (const mark of inside) {
-        const moved = editDimension(p, mark.dimension.id, mark.dimension.value + 12);
-        expect(automaticDimensions(moved).find(dim => dim.id === mark.dimension.id)!.value).toBeCloseTo(mark.dimension.value + 12);
+      const dimensions = automaticDimensions(p), before = JSON.stringify(dimensions);
+      for (const scale of [.7, 1, 5]) {
+        const visible = displayedDimensionLayout(dimensions, scale);
+        expect(visible).toEqual(layoutDimensions(dimensions.filter(dim => !dim.interior), scale));
+        expect(visible.some(mark => mark.dimension.interior)).toBe(false);
       }
-      p.walls = p.walls.filter(w => w.id !== "branch");
-      expect(displayedDimensionLayout(automaticDimensions(p)).some(mark => mark.dimension.interior)).toBe(false);
+      expect(dimensions.some(dim => dim.interior)).toBe(true);
+      expect(JSON.stringify(dimensions)).toBe(before);
     }
   });
-  test("matching lengths at different projected positions and directions remain independent", () => {
+  test("all interior marks are omitted regardless of position or direction", () => {
     const exterior = { id: "exterior", a: { x: 0, y: 0 }, b: { x: 120, y: 0 }, value: 120, offset: -36 };
     const duplicate = { ...exterior, id: "duplicate", a: { x: 120, y: 80 }, b: { x: 0, y: 80 }, interior: true, offset: 14 };
     const separate = { ...duplicate, id: "separate", a: { x: 360, y: 80 }, b: { x: 240, y: 80 } };
     const perpendicular = { ...duplicate, id: "perpendicular", a: { x: 180, y: 30 }, b: { x: 180, y: 150 } };
-    expect(displayedDimensionLayout([exterior, duplicate, separate, perpendicular]).map(mark => mark.dimension.id)).toEqual(["exterior", "separate", "perpendicular"]);
+    expect(displayedDimensionLayout([exterior, duplicate, separate, perpendicular]).map(mark => mark.dimension.id)).toEqual(["exterior"]);
   });
-  test("doorway widths and small-room measurements without a readable exterior label remain visible", () => {
+  test("doorway widths and small-room interior measurements stay hidden at every zoom", () => {
     const p = rectangle();
     p.openings = [{ id: "hallway", wallId: "w0", kind: "opening", t: .5, width: 36, flip: false }];
-    expect(displayedDimensionLayout(automaticDimensions(p)).filter(mark => mark.dimension.doorway && mark.labelBounds).map(mark => mark.dimension.openingId)).toEqual(["hallway"]);
+    expect(displayedDimensionLayout(automaticDimensions(p)).some(mark => mark.dimension.doorway)).toBe(false);
     const small = rectangle(36, 42);
     for (const scale of [.7, 1, 5]) {
       const marks = displayedDimensionLayout(automaticDimensions(small), scale), labels = marks.filter(mark => mark.labelBounds);
-      expect(labels.some(mark => mark.dimension.a.x === mark.dimension.b.x)).toBe(true);
-      expect(labels.some(mark => mark.dimension.a.y === mark.dimension.b.y)).toBe(true);
+      expect(marks).toEqual(layoutDimensions(automaticDimensions(small).filter(dim => !dim.interior), scale));
       for (const [i, mark] of labels.entries()) for (const other of labels.slice(i + 1)) expect(labelsOverlap(mark.labelBounds!, other.labelBounds!)).toBe(false);
-      expect(marks.some(mark => mark.dimension.interior && mark.labelBounds)).toBe(true);
+      expect(marks.some(mark => mark.dimension.interior)).toBe(false);
     }
   });
   test("rectangles and squares retain one span per direction in every orientation", () => {

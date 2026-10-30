@@ -140,7 +140,7 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
       const maxChars = Math.max(1, Math.floor((box.width - 10) / (fontSize * .7 * 1.13)));
       const name = info?.name ?? `ROOM ${i + 1}`, nameLabel = name.length > maxChars ? `${name.slice(0, maxChars - 1)}…` : name;
       const rowFontSize = (index: number) => fontSize * (index === 0 ? 1.13 : .9);
-      let rows = [nameLabel, `${room.area.toFixed(0)} sq ft`];
+      let rows = [nameLabel, `${dimensionLabel(Math.round(box.width))} × ${dimensionLabel(Math.round(box.height))}`];
       const position = () => labelPosition(room, obstacles, dimensionLabels, Math.max(...rows.map((row, index) => row.length * rowFontSize(index) * .62)) + 4, rows.length * fontSize * 1.45 + 4);
       let center = position();
       if (!center) { rows = rows.slice(0, 1); center = position(); }

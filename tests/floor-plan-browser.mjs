@@ -41,22 +41,7 @@ try {
   const history = async redo => { await page.getByRole("application").focus(); await page.keyboard.press(redo ? "ControlOrMeta+Shift+z" : "ControlOrMeta+z"); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); };
   const check = async (condition, description) => { assert(await condition, description); console.log(`PASS ${description}`); };
   const wait = () => page.waitForTimeout(550);
-  const interiorLabelsCentered = input => {
-    const elements = typeof input === "string" ? [...new DOMParser().parseFromString(input, "image/svg+xml").querySelectorAll("[data-room-dimension]")] : input;
-    return elements.every(el => {
-      const text = el.querySelector("text");
-      if (!text) return true;
-      const line = el.querySelector("path").getAttribute("d").match(/[ML][^ML]+/g).slice(-2).map(command => command.slice(1).split(",").map(Number));
-      const center = text.parentElement.getAttribute("transform").match(/translate\(([^)]+)\)/)[1].split(" ").map(Number);
-      const dx = line[1][0] - line[0][0], dy = line[1][1] - line[0][1], lengthSquared = dx * dx + dy * dy;
-      const along = ((center[0] - line[0][0]) * dx + (center[1] - line[0][1]) * dy) / lengthSquared;
-      const aligned = el.dataset.dimensionLabelAdjusted ? along >= 0 && along <= 1 && Math.abs((center[0] - line[0][0]) * dy - (center[1] - line[0][1]) * dx) < 1e-8
-        : Math.abs(center[0] - (line[0][0] + line[1][0]) / 2) < 1e-8 && Math.abs(center[1] - (line[0][1] + line[1][1]) / 2) < 1e-8;
-      return text.getAttribute("y") === "0" && text.getAttribute("dominant-baseline") === "central" && text.parentElement.getAttribute("text-anchor") === "middle"
-        && aligned;
-    });
-  };
-  const interiorArtwork = () => page.locator('[data-room-dimension]').evaluateAll(elements => elements.map(el => {
+  const dimensionArtwork = () => page.locator('[data-layer="dimensions"] [data-dimension]').evaluateAll(elements => elements.map(el => {
     const copy = el.cloneNode(true);
     for (const node of [copy, ...copy.querySelectorAll("*")]) {
       const attributes = [...node.attributes].map(a => [a.name, a.value]).sort(([a], [b]) => a.localeCompare(b));
@@ -177,8 +162,7 @@ try {
     };
   }, repo);
   await check(Promise.resolve(oppositeDimensions.rectangle.length === 0), "interior measurements matching the opposite exterior wall appear only outside");
-  await check(Promise.resolve(oppositeDimensions.split.map(mark => mark.dimension.value).join(",") === "234" && oppositeDimensions.split.every(mark => mark.label)), "a full interior span stays visible when the opposite exterior wall displays shorter segments");
-  await check(Promise.resolve(oppositeDimensions.different.map(mark => mark.dimension.value).sort((a, b) => a - b).join(",") === "114,114" && oppositeDimensions.different.every(mark => mark.label)), "shorter interior spans stay visible opposite a longer exterior wall in exports");
+  await check(Promise.resolve(oppositeDimensions.split.length === 0 && oppositeDimensions.different.length === 0), "exports omit all interior spans even when exterior chains measure different lengths");
 
   await check(Promise.resolve(await page.locator('[data-layer="rooms"] polygon').count() === 4), "four rooms generated automatically");
   await check(Promise.resolve(await page.getByRole("textbox", { name: "Plan name", exact: true }).count() === 1 && await page.locator(".fp-empty-properties, .fp-properties").count() === 0), "unselected right panel shows plan details without an empty properties section");
@@ -347,9 +331,8 @@ try {
   const compactNorthText = compactPage.locator('[data-dimension="exterior:side:north:segment:0"] text');
   const compactFontBeforeZoom = await compactNorthText.evaluate(dimensionScreenSize);
   await check(compactPage.locator('[data-layer="dimensions"] text').evaluateAll(elements => {
-    const angles = elements.map(el => Number(el.parentElement.getAttribute("transform").match(/rotate\(([^)]+)\)/)[1]));
-    return angles.length >= 2 && angles.some(angle => Math.abs(Math.sin((angle - angles[0]) * Math.PI / 180)) > .9);
-  }), "small rooms keep both a width and a depth dimension visible when zoomed out");
+    return elements.length > 0 && !elements.some(el => el.closest('[data-room-dimension], [data-doorway-dimension]'));
+  }), "zoomed-out small rooms show exterior dimensions without interior fallback marks");
   await check(Promise.resolve(await compactPage.locator('[data-dimension^="wall:short:"]').count() === 0 && await compactPage.evaluate(labelsReadable, undefined)), "small-room measurements omit spans under six inches and keep visible dimension and room labels from overlapping");
   await check(compactPage.locator('[data-layer="dimensions"] text').evaluateAll(elements => elements.length > 0 && elements.every(el => Number(el.getAttribute("font-size")) * Math.hypot(el.getScreenCTM().a, el.getScreenCTM().b) >= (el.closest('[data-dimension-label-adjusted]') ? 7.9 : 10.9) - 4 / 3)), "dimensions keep their screen size with the one-point font reduction");
   const compactFirst = compactPage.locator('[data-layer="dimensions"] [data-edit-dimension]').first();
@@ -393,8 +376,7 @@ try {
   await narrowPage.goto("http://127.0.0.1:4179"); await narrowPage.getByRole("application").waitFor();
   for (let i = 0; i < 8; i++) await narrowPage.getByRole("button", { name: "Zoom out", exact: true }).click();
   await narrowPage.screenshot({ path: resolve(output, "narrow-room-dimensions.png"), fullPage: true });
-  const narrowLabels = await narrowPage.locator('[data-layer="dimensions"] text').allTextContents();
-  await check(Promise.resolve(narrowLabels.length >= 2 && narrowLabels.includes("30″") && (narrowLabels.includes("3′") || narrowLabels.includes("3′ 0″")) && await narrowPage.evaluate(labelsReadable)), `a narrower closet-sized room keeps thirty-inch width and three-foot depth labels without overlap: ${narrowLabels.join(", ")}`);
+  await check(Promise.resolve(await narrowPage.locator('[data-room-dimension], [data-doorway-dimension]').count() === 0 && await narrowPage.evaluate(labelsReadable)), "a narrower closet-sized room never falls back to interior measurements when exterior labels cannot fit");
   await narrowContext.close();
   await compactContext.close();
   await bulkContext.addInitScript(({ key, plan }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 1, activeId: plan.id, plans: [plan] })); }, { key, plan: bulkPlan });
@@ -485,29 +467,13 @@ try {
   await check(Promise.resolve(await page.locator('[data-layer="roof"] polygon').count() === 1), "roof generated automatically");
   await check(Promise.resolve(await page.locator('[data-roof-line="ridge"]').count() === 1 && await page.locator('[data-roof-line="hip"]').count() === 4), "default hip roof has corner hips and a centered ridge above the furnished example");
   await check(page.locator('[data-layer="roof"]').evaluate(el => el.getAttribute("opacity") === "0.5" && el.getAttribute("stroke-dasharray") === "7 4" && [...el.querySelectorAll("path, polygon")].every(line => !line.hasAttribute("stroke-dasharray"))), "all roof geometry matches the perimeter dash pattern at 50 percent opacity");
-  await check(page.locator('[data-room-dimension]').evaluateAll(elements => new Set(elements.map(e => e.dataset.roomDimension)).size === 4), "all four sample rooms have dimensions near their walls");
-  await check(page.locator("[data-room-dimension]").evaluateAll(interiorLabelsCentered), "every interior number is centered along and on its dimension line");
-  const livingId = await page.locator('[data-layer="rooms"] polygon').evaluateAll(elements => elements.find(el => el.getAttribute("points").startsWith("3.000,3.000"))?.dataset.id);
-  await check(page.locator('[data-room-dimension]').evaluateAll((elements, roomId) => {
-    const labels = [...document.querySelectorAll('[data-layer="dimensions"] text')].map(e => e.textContent);
-    return labels.includes("6′ 0″") && labels.includes("8′ 9″") && labels.includes("13′ 9″") && labels.includes("10′ 9″") && elements.every(e => !e.querySelector("rect"));
-  }, livingId), "living/kitchen interior dimension chains appear near its walls without label backgrounds");
-  await check(page.locator('[data-room-dimension]').evaluateAll(elements => elements.every(e => !e.dataset.dimension.endsWith(":overall"))), "interior chains omit redundant overall totals");
-  await check(page.locator('[data-opening-dimension]').evaluateAll(elements => {
-    const ids = [...new Set(elements.map(e => e.dataset.openingDimension))];
-    return ids.length === 4 && ids.every(id => {
-      const chain = elements.filter(e => e.dataset.openingDimension === id);
-      return chain.length >= 1 && chain.filter(e => e.querySelector("text")).length === 1;
-    });
-  }), "every doorway has one width label, including shared interior doors");
-  await check(page.locator("[data-doorway-dimension]").evaluateAll(elements => elements.length === 4 && elements.every(dim => {
-    const opening = [...dim.ownerSVGElement.querySelectorAll('[data-kind="opening"]')].find(el => el.dataset.id === dim.dataset.doorwayDimension);
-    const text = dim.querySelector("text");
-    const label = text.parentElement.getCTM(), gap = opening.getCTM();
-    const ends = dim.querySelector("path").getAttribute("d").match(/[ML][^ML]+/g).map(command => command.slice(1).split(",").map(Number));
-    const width = Math.hypot(ends[1][0] - ends[0][0], ends[1][1] - ends[0][1]);
-    return Math.abs(label.e - gap.e) < 1e-7 && Math.abs(label.f - gap.f) < 1e-7 && text.getComputedTextLength() + 3 <= width;
-  })), "doorway numbers are centered in the actual gaps and fit between the jambs");
+  await check(Promise.resolve(await page.locator('[data-room-dimension], [data-doorway-dimension]').count() === 0), "auto dimensions omit all interior room and doorway marks");
+  await find("Layers").click();
+  await page.getByRole("switch", { name: "Auto dimensions", exact: true }).click();
+  await check(Promise.resolve(await page.locator('[data-layer="dimensions"]').count() === 0), "turning auto dimensions off hides exterior marks");
+  await page.getByRole("switch", { name: "Auto dimensions", exact: true }).click();
+  await check(Promise.resolve(await page.locator('[data-room-dimension], [data-doorway-dimension]').count() === 0 && await page.locator('[data-layer="dimensions"] text').count() > 0), "turning auto dimensions on restores only exterior measurements");
+  await find("Layers").click();
   await check(Promise.resolve(await page.locator('[data-dimension^="exterior:side:"][data-dimension$=":overall"]').count() > 0), "exterior dimensions retain segment chains and overall totals");
   await page.screenshot({ path: resolve(output, "furnished-example.png"), fullPage: true });
   await find("Layers").click();
@@ -694,7 +660,7 @@ try {
   await history(true);
   await check(Promise.resolve(await hingeToggle.getAttribute("aria-pressed") === "true"), "redo restores the right hinge");
   await page.screenshot({ path: resolve(output, "door-hinge-properties.png"), fullPage: true });
-  const dimensionsBeforeNotes = await interiorArtwork();
+  const dimensionsBeforeNotes = await dimensionArtwork();
   await find("Textbox").first().click(); await click(384, 54);
   const noteText = "CONSTRUCTION NOTES\n1. Remove existing partition.\n2. Verify dimensions on site.\n3. Install 36 inch door.";
   await page.getByRole("textbox", { name: "Construction note", exact: true }).fill(noteText);
@@ -717,12 +683,12 @@ try {
   await find("Delete").click(); await history(false);
   await check(Promise.resolve((await saved()).notes.length === 2), "undo restores a deleted construction note");
   await history(true);
-  await check(Promise.resolve((await saved()).notes.length === 1 && isDeepStrictEqual(dimensionsBeforeNotes, await interiorArtwork())), "notes do not affect interior dimensions");
+  await check(Promise.resolve((await saved()).notes.length === 1 && isDeepStrictEqual(dimensionsBeforeNotes, await dimensionArtwork())), "notes do not affect exterior dimensions");
   await find("Layers").click(); await page.getByRole("switch", { name: "Construction notes", exact: true }).click();
   await check(Promise.resolve(await page.locator('[data-layer="notes"]').count() === 0), "construction notes have a separate visibility layer");
   await page.getByRole("switch", { name: "Construction notes", exact: true }).click();
   await page.screenshot({ path: resolve(output, "construction-notes.png"), fullPage: true });
-  const dimensionsBeforeFixtures = await interiorArtwork();
+  const dimensionsBeforeFixtures = await dimensionArtwork();
   await find("Objects").click();
   await find("Place Queen bed").click(); await click(270, 96); await page.keyboard.press("Escape");
   await click(270, 96);
@@ -732,7 +698,7 @@ try {
   await check(Promise.resolve((await saved()).fixtures[0].width === 72 && (await saved()).fixtures[0].rotation === 90), "resize and rotate furniture");
   await drag(270, 96, 294, 120);
   await check(Promise.resolve((await saved()).fixtures[0].x === 294 && (await saved()).fixtures[0].y === 120), "drag furniture with grid snapping");
-  await check(Promise.resolve(isDeepStrictEqual(dimensionsBeforeFixtures, await interiorArtwork())), "placing, resizing, rotating and moving furniture leaves interior dimension lines and labels unchanged");
+  await check(Promise.resolve(isDeepStrictEqual(dimensionsBeforeFixtures, await dimensionArtwork())), "placing, resizing, rotating and moving furniture leaves exterior dimension lines and labels unchanged");
   await find("Copy").click();
   await check(Promise.resolve((await saved()).fixtures.length === 2), "duplicate selected furniture");
   await find("Delete").click();
@@ -765,7 +731,7 @@ try {
   placedShower = (await saved()).fixtures.find(f => f.catalogId === "shower");
   await check(Promise.resolve(Math.abs(placedShower.x - 25.5) < 1e-4 && Math.abs(placedShower.y - 32.5) < 1e-4), "turning Snap off keeps precise free positioning available");
   await history(false); await find("Snap off").click(); await history(false);
-  await check(Promise.resolve(isDeepStrictEqual(dimensionsBeforeFixtures, await interiorArtwork())), "adding and removing furniture and bathroom fixtures leaves all interior dimensions unchanged");
+  await check(Promise.resolve(isDeepStrictEqual(dimensionsBeforeFixtures, await dimensionArtwork())), "adding and removing furniture and bathroom fixtures leaves all exterior dimensions unchanged");
   await find("Systems").click(); await find("Cold-water supply").click(); await click(240, 216); await click(324, 216); await page.keyboard.press("Escape");
   await find("Electrical circuit").click(); await click(30, 60); await click(144, 60); await page.keyboard.press("Escape");
   await check(Promise.resolve((await saved()).utilities.length === 2), "route plumbing and electrical runs");
@@ -800,7 +766,7 @@ try {
   await check(Promise.resolve(json.notes[0].text === noteText), "editable backup includes construction notes");
   const svgDownload = page.waitForEvent("download"); await find("SVG drawing").click(); const svg = await svgDownload; const svgPath = resolve(output, "drawing.svg"); await svg.saveAs(svgPath);
   await check(Promise.resolve((await readFile(svgPath, "utf8")).includes('data-layer="dimensions"')), "export vector SVG with dimensions");
-  await check(Promise.resolve((await readFile(svgPath, "utf8")).includes('data-room-dimension=')), "export includes interior room dimensions");
+  await check(Promise.resolve(!(await readFile(svgPath, "utf8")).includes('data-room-dimension=')), "export omits interior room dimensions");
   await check(Promise.resolve((await readFile(svgPath, "utf8")).includes('data-roof-line="hip"') && (await readFile(svgPath, "utf8")).includes('data-roof-line="ridge"')), "SVG export includes the selected roof's hips and ridge");
   const svgText = await readFile(svgPath, "utf8");
   await check(page.evaluate(text => {
@@ -813,7 +779,7 @@ try {
     const door = new DOMParser().parseFromString(text, "image/svg+xml").querySelector('[data-door-hinge="right"]');
     return door?.getAttribute("transform") === "translate(18 0) scale(-1 -1)" && !!door.querySelector('[data-door-leaf]');
   }, svgText), "SVG export mirrors the right hinge and retains the flipped swing");
-  await check(page.evaluate(interiorLabelsCentered, svgText), "exported interior labels are centered on their dimension lines");
+  await check(Promise.resolve(!svgText.includes('data-doorway-dimension=')), "export omits doorway width marks inside the plan");
   const paints = [...svgText.matchAll(/(?:fill|stroke|color)="(#[0-9a-f]+)"/gi)].map(match => match[1].slice(1));
   await check(Promise.resolve(paints.length > 10 && paints.every(hex => hex.length === 3 ? hex[0] === hex[1] && hex[1] === hex[2] : hex.slice(0, 2) === hex.slice(2, 4) && hex.slice(2, 4) === hex.slice(4, 6))), "SVG artwork, fixtures, roof, labels and finish patterns use only monochrome colors");
   await check(page.evaluate(async svgText => {
