@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
 import { bounds, distance, fitOpening, moveWallPoint, normalizeOpenings, type Room } from "@/lib/floor-plan/geometry";
 import { DEFAULT_STAIR_STEPS, MAX_STAIR_STEPS, FINISHES, formatLength, type Plan, type Selection, type TextNote } from "@/lib/floor-plan/model";
+import { moveSlabPoints } from "@/lib/floor-plan/slabs";
 
 function NoteText({ note, onChange }: { note: TextNote; onChange: (text: string) => void }) {
   return <label className="fp-field"><span>Construction note</span><textarea aria-label="Construction note" rows={6} maxLength={2000} value={note.text} onChange={e => onChange(e.target.value)} autoFocus onFocus={e => { if (e.target.value === "Construction note") e.target.select(); }} placeholder="Describe the construction work…" /></label>;
@@ -28,18 +29,24 @@ export function PropertyPanel({ plan, selection, selections, rooms, commit, remo
   remove: () => void; duplicate: () => void; rotate: () => void; error: (message: string) => void;
 }) {
   if (selections.length > 1) {
-    const names = { wall: ["wall", "walls"], opening: ["opening", "openings"], fixture: ["object", "objects"], utility: ["utility run", "utility runs"], text: ["note", "notes"], room: ["room", "rooms"] };
+    const names = { wall: ["wall", "walls"], slab: ["slab edge", "slab edges"], opening: ["opening", "openings"], fixture: ["object", "objects"], utility: ["utility run", "utility runs"], text: ["note", "notes"], room: ["room", "rooms"] };
     const counts = Object.entries(names).map(([type, name]) => { const count = selections.filter(s => s.type === type).length; return count ? `${count} ${name[count === 1 ? 0 : 1]}` : null; }).filter(Boolean);
     return <div className="fp-properties"><div className="fp-properties-heading"><span className="fp-kicker">Group selection</span><h3>{selections.length} elements selected</h3></div><p className="fp-field-note">{counts.join(" · ")}</p><p className="fp-field-note">Drag any selected element to move the group. Arrow keys nudge; Shift + arrows move 1 inch. Shift-click adds or removes an element.</p><div className="fp-property-actions"><button className="fp-button fp-danger fp-wide" onClick={remove}><Trash2 size={15} />Delete selected</button></div></div>;
   }
   if (!selection) return <div className="fp-empty-properties"><span className="fp-crosshair">⌖</span><p>Select an element<br />to edit its properties.</p><small>Click a wall, fixture, opening,<br />or room to edit its properties.</small></div>;
   const wall = selection.type === "wall" ? plan.walls.find(w => w.id === selection.id) : undefined;
+  const slab = selection.type === "slab" ? plan.slabs.find(s => s.id === selection.id) : undefined;
   const fixture = selection.type === "fixture" ? plan.fixtures.find(f => f.id === selection.id) : undefined;
   const opening = selection.type === "opening" ? plan.openings.find(o => o.id === selection.id) : undefined;
   const utility = selection.type === "utility" ? plan.utilities.find(u => u.id === selection.id) : undefined;
   const note = selection.type === "text" ? plan.notes.find(n => n.id === selection.id) : undefined;
   const room = selection.type === "room" ? rooms.find(r => r.id === selection.id) : undefined;
-  const title = wall ? `${wall.kind === "exterior" ? "Exterior" : "Interior"} wall` : fixture ? CATALOG_MAP.get(fixture.catalogId)?.name ?? "Fixture" : opening ? `${opening.kind === "door" ? "Door" : opening.kind === "window" ? "Window" : "Opening"}` : room ? "Room & finish" : utility ? "Utility run" : note ? "Construction note" : "Selection";
+  const title = slab ? "Concrete slab edge" : wall ? `${wall.kind === "exterior" ? "Exterior" : "Interior"} wall` : fixture ? CATALOG_MAP.get(fixture.catalogId)?.name ?? "Fixture" : opening ? `${opening.kind === "door" ? "Door" : opening.kind === "window" ? "Window" : "Opening"}` : room ? "Room & finish" : utility ? "Utility run" : note ? "Construction note" : "Selection";
+  const updateSlabPoint = (end: "a" | "b", point: { x: number; y: number }) => {
+    if (!slab) return;
+    try { commit(moveSlabPoints(plan, [{ from: slab[end], to: point }])); }
+    catch (e) { error(e instanceof Error ? e.message : "The slab edge could not be changed."); }
+  };
   const updateNote = (patch: Partial<TextNote>) => commit({ ...plan, notes: plan.notes.map(n => n.id === note?.id ? { ...n, ...patch } : n) });
   const updateFixture = (patch: Partial<NonNullable<typeof fixture>>) => commit({ ...plan, fixtures: plan.fixtures.map(f => f.id === fixture?.id ? { ...f, ...patch } : f) });
   const updateOpening = (patch: Partial<NonNullable<typeof opening>>) => {
@@ -51,6 +58,14 @@ export function PropertyPanel({ plan, selection, selections, rooms, commit, remo
   };
   return <div className="fp-properties">
     <div className="fp-properties-heading"><span className="fp-kicker">Selected element</span><h3>{title}</h3></div>
+    {slab ? <>
+      <NumberField label="Slab edge length" value={distance(slab.a, slab.b)} min={1} max={12000} onChange={n => {
+        const length = distance(slab.a, slab.b);
+        updateSlabPoint("b", { x: slab.a.x + (slab.b.x - slab.a.x) * n / length, y: slab.a.y + (slab.b.y - slab.a.y) * n / length });
+      }} />
+      <div className="fp-property-grid">{(["a", "b"] as const).flatMap((end, i) => (["x", "y"] as const).map(axis => <NumberField key={`${end}-${axis}`} label={`${i ? "End" : "Start"} ${axis.toUpperCase()}`} value={slab[end][axis]} onChange={n => updateSlabPoint(end, { ...slab[end], [axis]: n })} />))}</div>
+      <p className="fp-field-note">Drag an edge or its endpoints to reshape the slab. Shared slab corners stay connected. Dimensions appear when the outline closes, including against existing walls.</p>
+    </> : null}
     {wall ? <>
       <label className="fp-field"><span>Wall type</span><select aria-label="Wall type" value={wall.kind} onChange={e => commit({ ...plan, walls: plan.walls.map(w => w.id === wall.id ? { ...w, kind: e.target.value as "interior" | "exterior" } : w) })}><option value="exterior">Exterior</option><option value="interior">Interior</option></select></label>
       <NumberField label="Wall thickness" value={wall.thickness} min={1} max={24} step={0.5} onChange={n => { const walls = plan.walls.map(w => w.id === wall.id ? { ...w, thickness: n } : w); commit({ ...plan, walls, openings: normalizeOpenings(walls, plan.openings) }); }} />

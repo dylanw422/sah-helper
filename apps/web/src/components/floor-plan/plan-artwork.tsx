@@ -45,7 +45,7 @@ function DimensionMark({ dim, fontSize, label: suppliedLabel, labelPosition: sup
   const hitWidth = Math.max(label.length * labelFontSize * 0.7 + 8 / scale, 28 / scale), hitHeight = Math.max(labelFontSize * 1.8, 22 / scale);
   const hitTop = (dim.interior ? 0 : -4) - hitHeight / 2;
   const activate = (e: React.PointerEvent<SVGElement>) => { e.preventDefault(); e.stopPropagation(); onEdit?.(dim.id); };
-  return <g className="fp-dimension" fill="none" stroke={dim.overall ? paint("#c5c9dc", "#345955") : paint("#a1a6bc", "#6d827e")} strokeWidth="0.6" pointerEvents="none" data-dimension={dim.id} data-room-dimension={dim.roomId} data-opening-dimension={dim.openingId} data-doorway-dimension={dim.doorway ? dim.openingId : undefined} data-dimension-label-adjusted={suppliedPosition ? "true" : undefined}>
+  return <g className="fp-dimension" fill="none" stroke={dim.overall ? paint("#c5c9dc", "#345955") : paint("#a1a6bc", "#6d827e")} strokeWidth="0.6" pointerEvents="none" data-dimension={dim.id} data-room-dimension={dim.roomId} data-slab-dimension={dim.slabId} data-opening-dimension={dim.openingId} data-doorway-dimension={dim.doorway ? dim.openingId : undefined} data-dimension-label-adjusted={suppliedPosition ? "true" : undefined}>
     <path d={dim.doorway ? `M${a.x},${a.y}L${b.x},${b.y}` : `M${dim.a.x + nx * (dim.roomId ? 2 : 8)},${dim.a.y + ny * (dim.roomId ? 2 : 8)}L${a.x + nx * 4},${a.y + ny * 4}M${dim.b.x + nx * (dim.roomId ? 2 : 8)},${dim.b.y + ny * (dim.roomId ? 2 : 8)}L${b.x + nx * 4},${b.y + ny * 4}M${a.x},${a.y}L${b.x},${b.y}`} />
     {[a, b].map((p, i) => <path key={i} d={`M${p.x - 2},${p.y + 2}L${p.x + 2},${p.y - 2}`} strokeWidth="1.2" />)}
     {onEdit && !dim.hideLabel ? <path d={`M${a.x},${a.y}L${b.x},${b.y}`} stroke="transparent" strokeWidth={10 / scale} pointerEvents="stroke" style={{ cursor: "pointer" }} onPointerDown={activate} /> : null}
@@ -74,7 +74,7 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
   const paint = artworkPalette(dark, monochrome);
   const detected = useMemo(() => suppliedRooms ?? detectRooms(plan.walls), [plan.walls, suppliedRooms]);
   const roofs = useMemo(() => layers.roof ? roofLayouts(plan) : [], [plan.walls, plan.roofOverhang, plan.roofType, layers.roof]);
-  const dims = useMemo(() => layers.dimensions ? automaticDimensions({ walls: plan.walls, openings: plan.openings }, detected) : [], [plan.walls, plan.openings, detected, layers.dimensions]);
+  const dims = useMemo(() => layers.dimensions ? automaticDimensions({ walls: plan.walls, openings: plan.openings, slabs: plan.slabs }, detected) : [], [plan.walls, plan.openings, plan.slabs, detected, layers.dimensions]);
   const dimensionLayout = useMemo(() => displayedDimensionLayout(dims, scale), [dims, scale]);
   const dimensionLabels = useMemo(() => dimensionLayout.flatMap(mark => mark.labelBounds ? [mark.labelBounds] : []), [dimensionLayout]);
   const wallBodies = useMemo(() => wallFaceGeometry(plan.walls, detected), [plan.walls, detected]);
@@ -98,6 +98,11 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
         {roof.lines.map((line, j) => <path key={j} data-roof-line={line.kind} d={`M${line.a.x},${line.a.y}L${line.b.x},${line.b.y}`} strokeWidth={line.kind === "ridge" ? 1.4 : 1}><title>{line.kind === "ridge" ? "Roof ridge" : line.kind === "hip" ? "Roof hip" : "Roof valley"}</title></path>)}
       </g>)}
     </g> : null}
+    <g data-layer="slabs">{plan.slabs.map(edge => <g key={edge.id} data-kind="slab" data-id={edge.id}>
+      <path d={`M${edge.a.x},${edge.a.y}L${edge.b.x},${edge.b.y}`} fill="none" stroke="transparent" strokeWidth={12 / scale} />
+      <path data-slab-edge={edge.id} d={`M${edge.a.x},${edge.a.y}L${edge.b.x},${edge.b.y}`} fill="none" stroke={selected("slab", edge.id) ? paint("#a5a7fa", "#0e8c7c") : paint("#fff", "#52635c")} strokeWidth="3" strokeDasharray="1 8" strokeLinecap="round" pointerEvents="none" />
+      {selection?.type === "slab" && selection.id === edge.id ? (["a", "b"] as const).map(end => <circle key={end} cx={edge[end].x} cy={edge[end].y} r={5 / scale} fill={paint("#22242c", "#fff")} stroke={paint("#a5a7fa", "#0e8c7c")} strokeWidth={1.5 / scale} data-kind="slab" data-id={edge.id} data-end={end} />) : null}
+    </g>)}</g>
     <g data-layer="walls">
       {/* Paint every border before any wall body, so overlapping bodies hide internal seams. */}
       {wallInk.flatMap(({ wall: w, segments }) => segments.map((segment, i) => <path key={`${w.id}:${i}`} data-wall-outline={w.id} pointerEvents="none" d={`M${segment.a.x},${segment.a.y}L${segment.b.x},${segment.b.y}`} fill="none" stroke={selected("wall", w.id) ? paint("#818cf8", "#0e8c7c") : paint("#b4b7c7", "#31463f")} strokeWidth={w.thickness + 1} strokeLinecap="square" />))}
@@ -150,7 +155,7 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
         {rows.map((row, index) => <text key={index} y={(index - (rows.length - 1) / 2) * fontSize * 1.45 + fontSize * 0.35} fontSize={rowFontSize(index)} fontWeight={index === 0 ? 600 : undefined}>{row}</text>)}
       </g>;
     })}</g> : null}
-    {layers.dimensions ? <g data-layer="dimensions">{dimensionLayout.map(({ dimension: dim, fontSize: labelFontSize, label, labelPosition }) => <DimensionMark key={dim.id} dim={dim} label={label} labelPosition={labelPosition} dark={dark} monochrome={monochrome} fontSize={labelFontSize} scale={scale} onEdit={onDimensionEdit && !dimensionOpening(plan, dim, wallBodies) ? () => onDimensionEdit(dim) : undefined} />)}</g> : null}
+    {layers.dimensions ? <g data-layer="dimensions">{dimensionLayout.map(({ dimension: dim, fontSize: labelFontSize, label, labelPosition }) => <DimensionMark key={dim.id} dim={dim} label={label} labelPosition={labelPosition} dark={dark} monochrome={monochrome} fontSize={labelFontSize} scale={scale} onEdit={onDimensionEdit && !dim.slabId && !dimensionOpening(plan, dim, wallBodies) ? () => onDimensionEdit(dim) : undefined} />)}</g> : null}
     {layers.notes ? <g data-layer="notes">{plan.notes.map(note => {
       const layout = noteLayout(note), active = selected("text", note.id);
       return <g key={note.id} data-kind="text" data-id={note.id} transform={`translate(${note.x} ${note.y})`}>

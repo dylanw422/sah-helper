@@ -64,6 +64,21 @@ test("client plans preserve roof type, accept legacy backups, and reject invalid
   expect(parsePlan(JSON.parse((await a.query(api.floorPlans.get, { id: saved.id })).document)).roofType).toBe("gable");
 });
 
+test("client plans preserve slab outlines, copy them into After, and validate slab coordinates", async () => {
+  const { a } = await setup();
+  const plan = starterPlan();
+  plan.slabs = [
+    { id: "pad-west", a: { x: 24, y: 0 }, b: { x: 24, y: -72 } },
+    { id: "pad-north", a: { x: 24, y: -72 }, b: { x: 144, y: -72 } },
+    { id: "pad-east", a: { x: 144, y: -72 }, b: { x: 144, y: 0 } },
+  ];
+  const saved = await a.mutation(api.floorPlans.saveToNewClient, { client, document: JSON.stringify(plan), expectedRevision: 0, requestId: "slabs" });
+  expect(parsePlan(JSON.parse((await a.query(api.floorPlans.get, { id: saved.id })).document)).slabs).toEqual(plan.slabs);
+  const after = await a.mutation(api.floorPlans.start, { clientId: saved.clientId, stage: "after", expectedBeforeRevision: 1 });
+  expect(parsePlan(JSON.parse(after.document)).slabs).toEqual(plan.slabs);
+  await expect(a.mutation(api.floorPlans.save, { clientId: saved.clientId, document: JSON.stringify({ ...plan, slabs: [{ ...plan.slabs[0], b: plan.slabs[0].a }] }), expectedRevision: 1 })).rejects.toThrow("valid floor-plan");
+});
+
 test("updates use revisions, retry without duplicating, and move plans between clients", async () => {
   const { a } = await setup();
   const original = await a.mutation(api.floorPlans.saveToNewClient, { client, document: document(), expectedRevision: 0, requestId: "first" });

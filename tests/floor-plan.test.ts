@@ -14,6 +14,123 @@ import { dimensionEnds, editDimension } from "../apps/web/src/lib/floor-plan/edi
 import { snapFixtureToWalls } from "../apps/web/src/lib/floor-plan/fixture-snapping";
 import { CATALOG } from "../apps/web/src/lib/floor-plan/catalog";
 import { cabinetPlacementClear, snapCabinet } from "../apps/web/src/lib/floor-plan/cabinet-snapping";
+import { addSlabEdges, moveSlabEdge, moveSlabPoints, slabAreas, slabSnapWalls } from "../apps/web/src/lib/floor-plan/slabs";
+
+describe("concrete slabs", () => {
+  const pad = () => addSlabEdges(blankPlan(), [{ x: 0, y: 0 }, { x: 120, y: 0 }, { x: 120, y: 72 }, { x: 0, y: 72 }], true);
+
+  test("a freestanding rectangle dimensions its outline without creating rooms or a roof", () => {
+    const plan = pad();
+    expect(slabAreas(plan)).toHaveLength(1);
+    expect(slabAreas(plan)[0].area).toBeCloseTo(60);
+    expect(detectRooms(plan.walls)).toHaveLength(0);
+    expect(roofLayouts(plan)).toHaveLength(0);
+    const marks = displayedDimensionLayout(automaticDimensions(plan));
+    expect(marks.map(m => m.dimension.value).sort((a, b) => a - b)).toEqual([72, 72, 120, 120]);
+    for (const mark of marks) {
+      expect(mark.dimension.slabId).toBeDefined();
+      expect(mark.labelBounds).toBeDefined();
+      const { a, b, offset } = mark.dimension, length = Math.hypot(b.x - a.x, b.y - a.y);
+      const mid = { x: (a.x + b.x) / 2 - (b.y - a.y) / length * offset, y: (a.y + b.y) / 2 + (b.x - a.x) / length * offset };
+      expect(pointInPolygon(mid, slabAreas(plan)[0].points)).toBe(false);
+    }
+  });
+
+  test("three edges close a patio against an existing wall without changing the house", () => {
+    const house = rectangle(), rooms = detectRooms(house.walls), roof = roofLayouts(house);
+    let plan = addSlabEdges(house, [{ x: 24, y: 0 }, { x: 24, y: -72 }, { x: 144, y: -72 }]);
+    expect(automaticDimensions(plan).some(d => d.slabId)).toBe(false);
+    plan = addSlabEdges(plan, [{ x: 144, y: -72 }, { x: 144, y: 0 }]);
+    expect(slabAreas(plan)).toHaveLength(1);
+    expect(automaticDimensions(plan).filter(d => d.slabId).map(d => d.value).sort((a, b) => a - b)).toEqual([72, 72, 120]);
+    expect(detectRooms(plan.walls)).toEqual(rooms);
+    expect(roofLayouts(plan)).toEqual(roof);
+    expect(plan.walls).toEqual(house.walls);
+    expect(plan.fixtures).toEqual(house.fixtures);
+  });
+
+  test("a slab can close between perpendicular walls, while a dangling line stays undimensioned", () => {
+    let plan = rectangle();
+    plan = addSlabEdges(plan, [{ x: 0, y: 60 }, { x: 60, y: 60 }, { x: 60, y: 0 }]);
+    expect(automaticDimensions(plan).filter(d => d.slabId).map(d => d.value)).toEqual([60, 60]);
+    const dangling = addSlabEdges(rectangle(), [{ x: 120, y: 0 }, { x: 120, y: 60 }]);
+    expect(slabAreas(dangling)).toHaveLength(0);
+    expect(automaticDimensions(dangling).some(d => d.slabId)).toBe(false);
+  });
+
+  test("rotating a pad or reversing its edges preserves measurements", () => {
+    for (const angle of [0, Math.PI / 4, Math.PI / 2]) {
+      const plan = pad(), rotate = (p: Point) => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) });
+      plan.slabs = plan.slabs.map(s => ({ ...s, a: rotate(s.b), b: rotate(s.a) }));
+      const dims = automaticDimensions(plan);
+      expect(dims.map(d => Math.round(d.value)).sort((a, b) => a - b)).toEqual([72, 72, 120, 120]);
+      expect(new Set(dims.map(d => d.id)).size).toBe(dims.length);
+    }
+  });
+
+  test("small landing pads are not subject to the minimum interior-room area", () => {
+    const plan = addSlabEdges(blankPlan(), [{ x: 0, y: 0 }, { x: 12, y: 0 }, { x: 12, y: 12 }, { x: 0, y: 12 }], true);
+    expect(slabAreas(plan)).toHaveLength(1);
+    expect(automaticDimensions(plan).map(d => d.value)).toEqual([12, 12, 12, 12]);
+  });
+
+  test("snapping closes on slab corners and on walls while keeping the locked axis", () => {
+    const plan = pad(), targets = [...rectangle().walls, ...slabSnapWalls(plan.slabs)];
+    expect(snapPoint({ x: 118, y: 73 }, targets, 6, 8, { x: 120, y: 0 })).toEqual({ x: 120, y: 72 });
+    expect(snapPoint({ x: 61, y: 2 }, targets, 6, 8, { x: 60, y: -72 })).toEqual({ x: 60, y: 0 });
+  });
+
+  test("editing and moving a slab edge keeps shared slab corners connected", () => {
+    const plan = pad(), moved = moveSlabEdge(plan, plan.slabs[1].id, { x: 24, y: 0 });
+    expect(slabAreas(moved)).toHaveLength(1);
+    expect(automaticDimensions(moved).map(d => d.value).sort((a, b) => a - b)).toEqual([72, 72, 144, 144]);
+    const resized = moveSlabPoints(plan, [{ from: plan.slabs[0].b, to: { x: 144, y: 0 } }]);
+    expect(resized.slabs[0].b).toEqual(resized.slabs[1].a);
+    expect(resized.slabs[1].b).toEqual({ x: 144, y: 72 });
+    expect(slabAreas(resized)[0].area).toBeCloseTo(72);
+    expect(() => moveSlabPoints(plan, [{ from: plan.slabs[0].a, to: plan.slabs[0].b }])).toThrow("collapse");
+    expect(slabAreas(plan)[0].area).toBeCloseTo(60);
+  });
+
+  test("wall moves keep attached slab endpoints connected and regenerate their dimensions", () => {
+    const plan = addSlabEdges(rectangle(), [{ x: 24, y: 0 }, { x: 24, y: -72 }, { x: 144, y: -72 }, { x: 144, y: 0 }]);
+    const moved = moveWalls(plan, ["w0"], { x: 0, y: -12 });
+    expect(moved.slabs[0].a).toEqual({ x: 24, y: -12 });
+    expect(moved.slabs[2].b).toEqual({ x: 144, y: -12 });
+    expect(automaticDimensions(moved).filter(d => d.slabId).map(d => d.value).sort((a, b) => a - b)).toEqual([60, 60, 120]);
+    const grouped = moveSelection(plan, [{ type: "wall", id: "w0" }, { type: "slab", id: plan.slabs[0].id }], { x: 0, y: -12 });
+    expect(grouped.slabs[0].a).toEqual({ x: 24, y: -12 });
+    expect(pointInPolygon({ x: 72, y: -36 }, slabAreas(grouped)[0].points)).toBe(true);
+    expect(moveWalls(plan, ["w0"], { x: 0, y: -72 })).toBe(plan);
+  });
+
+  test("slabs participate in selection, group moves, deletion, and print fitting", () => {
+    const plan = pad(), selected = selectInBox(plan, { x: -4, y: -4 }, { x: 124, y: 76 }, DEFAULT_LAYERS);
+    expect(selected.filter(s => s.type === "slab")).toHaveLength(4);
+    const moved = moveSelection(plan, selected, { x: 360, y: 120 });
+    expect(slabAreas(moved)[0].area).toBeCloseTo(60);
+    expect(moved.slabs[0].a).toEqual({ x: 360, y: 120 });
+    expect(selectionBounds(moved, selected)!.x).toBeGreaterThan(350);
+    const box = printBounds(moved, DEFAULT_LAYERS);
+    expect(box.x + box.width).toBeGreaterThan(480);
+    expect(box.y + box.height).toBeGreaterThan(192);
+    const deleted = deleteSelection(moved, selected.slice(0, 1));
+    expect(deleted.slabs).toHaveLength(3);
+    expect(automaticDimensions(deleted).some(d => d.slabId)).toBe(false);
+  });
+
+  test("slabs survive backups and sync fingerprints; older plans default to no slabs", () => {
+    const plan = pad();
+    expect(parsePlan(JSON.parse(JSON.stringify(plan))).slabs).toEqual(plan.slabs);
+    const { slabs, ...legacy } = plan;
+    expect(parsePlan(legacy).slabs).toEqual([]);
+    expect(planFingerprint(plan)).not.toBe(planFingerprint({ ...plan, slabs: [] }));
+    for (const invalid of [null, {}, [{ ...slabs[0], a: { x: Infinity, y: 0 } }], [{ ...slabs[0], b: slabs[0].a }], [slabs[0], slabs[0]], Array(501).fill(slabs[0])]) {
+      expect(() => parsePlan({ ...plan, slabs: invalid })).toThrow();
+    }
+    expect(() => addSlabEdges(plan, [slabs[0].a, slabs[0].b])).toThrow("already exists");
+  });
+});
 
 describe("client sync", () => {
   test("timestamps do not mark an unchanged or undone plan as dirty", () => {

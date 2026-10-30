@@ -1,6 +1,6 @@
 import { constrainWallAngles } from "./wall-constraints";
 import { automaticDimensions, type Dimension } from "./dimensions";
-import { detectRooms, distance, fitOpening, lerp, project, samePoint, wallFaceGeometry } from "./geometry";
+import { detectRooms, distance, fitOpening, lerp, project, samePoint, slabsFollowingWalls, wallFaceGeometry } from "./geometry";
 import { parsePlan, type Opening, type Plan, type Point, type Wall } from "./model";
 
 export type FixedDimensionEnd = "start" | "end";
@@ -138,7 +138,7 @@ function moveAttachedWalls(plan: Plan, movingWalls: Wall[], movingPoint: Point |
     return { ...opening, t: project(add(center, shift), wall.a, wall.b).t };
   });
   for (const opening of openings) validateOpening(walls.find(w => w.id === opening.wallId)!, opening, openings, walls);
-  return { ...plan, walls, openings };
+  return { ...plan, walls, slabs: slabsFollowingWalls(plan, walls), openings };
 }
 
 export function editDimension(plan: Plan, dimensionId: string, inches: number, fixedEnd: FixedDimensionEnd = "start"): Plan {

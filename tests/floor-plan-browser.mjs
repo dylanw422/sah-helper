@@ -855,14 +855,14 @@ try {
   await check(Promise.resolve((await saved()).roofType === "hip" && await page.locator('[data-roof-line="valley"]').count() > 0 && await page.locator('[data-roof-line="hip"]').count() > 0), "roof status opens settings and a concave hip roof retains its valleys");
   await page.screenshot({ path: resolve(output, "concave-hip-roof.png"), fullPage: true });
   await find("Build").click();
-  await page.getByRole("spinbutton", { name: "Exact next wall length" }).fill("120");
-  await page.getByRole("spinbutton", { name: "Exact next wall length" }).press("Tab");
+  await page.getByRole("spinbutton", { name: "Exact next edge length" }).fill("120");
+  await page.getByRole("spinbutton", { name: "Exact next edge length" }).press("Tab");
   await find("Exterior wall").first().click();
   await click(360, 240); await click(414, 240); await page.keyboard.press("Escape");
   const exactWall = (await saved()).walls.at(-1);
   await check(Promise.resolve(Math.hypot(exactWall.b.x - exactWall.a.x, exactWall.b.y - exactWall.a.y) === 120), "draw walls to an exact entered length");
-  await page.getByRole("spinbutton", { name: "Exact next wall length" }).fill("0");
-  await page.getByRole("spinbutton", { name: "Exact next wall length" }).press("Tab");
+  await page.getByRole("spinbutton", { name: "Exact next edge length" }).fill("0");
+  await page.getByRole("spinbutton", { name: "Exact next edge length" }).press("Tab");
   await find("Interior wall").first().click(); await drag(90, 0, 90, 240); await page.keyboard.press("Escape");
   await check(Promise.resolve(await page.locator('[data-layer="rooms"] polygon').count() === 2), "draw interior partitions by dragging");
   // Reproduce the reported side-name/wall-name collision with an inset west wall.

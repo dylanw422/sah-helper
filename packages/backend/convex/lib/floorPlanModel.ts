@@ -1,6 +1,7 @@
 // All model coordinates and sizes are inches. Screen pixels never enter saved plans.
 export type Point = { x: number; y: number };
 export type Wall = { id: string; a: Point; b: Point; kind: "exterior" | "interior"; thickness: number };
+export type SlabEdge = { id: string; a: Point; b: Point };
 export type Opening = { id: string; wallId: string; kind: "door" | "window" | "opening"; t: number; width: number; flip: boolean; hinge?: "left" | "right" };
 export type Fixture = { id: string; catalogId: string; x: number; y: number; width: number; depth: number; rotation: number; steps?: number };
 export const DEFAULT_STAIR_STEPS = 12;
@@ -12,11 +13,11 @@ export type RoomInfo = { name: string; finish: Finish };
 export type RoofType = "gable" | "hip";
 export type Plan = {
   version: 1; id: string; name: string; updatedAt: number;
-  walls: Wall[]; openings: Opening[]; fixtures: Fixture[]; utilities: Utility[]; notes: TextNote[];
+  walls: Wall[]; slabs: SlabEdge[]; openings: Opening[]; fixtures: Fixture[]; utilities: Utility[]; notes: TextNote[];
   rooms: Record<string, RoomInfo>; roofOverhang: number; roofType: RoofType;
 };
-export type Selection = { type: "wall" | "opening" | "fixture" | "utility" | "room" | "text"; id: string };
-export type Tool = "select" | "pan" | "exterior" | "interior" | "rectangle" | "door" | "window" | "opening" | "stairs" | "fixture" | "text" | Utility["kind"];
+export type Selection = { type: "wall" | "slab" | "opening" | "fixture" | "utility" | "room" | "text"; id: string };
+export type Tool = "select" | "pan" | "exterior" | "interior" | "rectangle" | "slab" | "door" | "window" | "opening" | "stairs" | "fixture" | "text" | Utility["kind"];
 export type Layers = { grid: boolean; dimensions: boolean; roof: boolean; fixtures: boolean; utilities: boolean; finishes: boolean; labels: boolean; notes: boolean };
 export const DEFAULT_LAYERS: Layers = { grid: true, dimensions: true, roof: true, fixtures: true, utilities: true, finishes: false, labels: true, notes: true };
 export const FINISHES: { id: Finish; name: string; color: string }[] = [
@@ -29,7 +30,7 @@ export const FINISHES: { id: Finish; name: string; color: string }[] = [
 ];
 export const id = () => crypto.randomUUID();
 export function blankPlan(name = "Untitled floor plan", draftId: string = id()): Plan {
-  return { version: 1, id: draftId, name, updatedAt: Date.now(), walls: [], openings: [], fixtures: [], utilities: [], notes: [], rooms: {}, roofOverhang: 18, roofType: "hip" };
+  return { version: 1, id: draftId, name, updatedAt: Date.now(), walls: [], slabs: [], openings: [], fixtures: [], utilities: [], notes: [], rooms: {}, roofOverhang: 18, roofType: "hip" };
 }
 export function formatLength(inches: number): string {
   const eighths = Math.round(Math.abs(inches) * 8);
@@ -94,6 +95,11 @@ export function parsePlan(value: unknown): Plan {
     return { id: str(w.id), a, b, kind: w.kind as Wall["kind"], thickness: num(w.thickness, 1, 24) };
   });
   const wallIds = new Set(walls.map(w => w.id));
+  const slabs = p.slabs === undefined ? [] : arr(p.slabs, s => {
+    const a = point(s.a), b = point(s.b);
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 0.5) fail();
+    return { id: str(s.id), a, b };
+  });
   const openings = arr(p.openings, o => {
     if ((o.kind !== "door" && o.kind !== "window" && o.kind !== "opening") || !wallIds.has(String(o.wallId)) || typeof o.flip !== "boolean") fail();
     if (o.hinge !== undefined && o.hinge !== "left" && o.hinge !== "right") fail();
@@ -119,7 +125,7 @@ export function parsePlan(value: unknown): Plan {
     if (typeof n.text !== "string" || n.text.length > 2000 || typeof n.border !== "boolean") fail();
     return { id: str(n.id), x: num(n.x), y: num(n.y), width: num(n.width, 48, 2400), fontSize: num(n.fontSize, 4, 24), text: n.text as string, border: n.border as boolean };
   }, 100);
-  const allIds = [...walls, ...openings, ...fixtures, ...utilities, ...notes].map(o => o.id);
+  const allIds = [...walls, ...slabs, ...openings, ...fixtures, ...utilities, ...notes].map(o => o.id);
   if (new Set(allIds).size !== allIds.length) fail();
   const rooms: Record<string, RoomInfo> = Object.create(null);
   const rawRooms = obj(p.rooms);
@@ -129,5 +135,5 @@ export function parsePlan(value: unknown): Plan {
     if (!FINISHES.some(f => f.id === r.finish)) fail();
     rooms[str(key, 100000)] = { name: str(r.name, 80), finish: r.finish as Finish };
   }
-  return { version: 1, id: str(p.id), name: str(p.name), updatedAt: num(p.updatedAt, 0, Number.MAX_SAFE_INTEGER), walls, openings, fixtures, utilities, notes, rooms, roofOverhang: num(p.roofOverhang, 0, 72), roofType: p.roofType as RoofType | undefined ?? "gable" };
+  return { version: 1, id: str(p.id), name: str(p.name), updatedAt: num(p.updatedAt, 0, Number.MAX_SAFE_INTEGER), walls, slabs, openings, fixtures, utilities, notes, rooms, roofOverhang: num(p.roofOverhang, 0, 72), roofType: p.roofType as RoofType | undefined ?? "gable" };
 }

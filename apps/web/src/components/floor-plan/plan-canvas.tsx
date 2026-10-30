@@ -11,6 +11,7 @@ import { formatLength, id, type Fixture, type Layers, type Plan, type Point, typ
 import { mergeSelections, moveSelection, selectInBox, selectionBounds, selectionKey } from "@/lib/floor-plan/selection";
 import { snapFixtureToWalls } from "@/lib/floor-plan/fixture-snapping";
 import { cabinetPlacementClear, isCabinet, snapCabinet } from "@/lib/floor-plan/cabinet-snapping";
+import { addSlabEdges, moveSlabEdge, moveSlabPoints, slabSnapWalls } from "@/lib/floor-plan/slabs";
 import { FixtureSymbol } from "./fixture-symbol";
 import { DimensionInlineEditor } from "./dimension-inline-editor";
 import { PlanArtwork, UTILITY_COLORS } from "./plan-artwork";
@@ -25,6 +26,7 @@ export const TOOL_HINTS: Record<Tool, string> = {
   exterior: "Click corners or drag a wall · Esc ends the chain · Shift allows angles",
   interior: "Click corners or drag a wall · Snap to exterior walls to create rooms",
   rectangle: "Click or drag two opposite corners to create exterior walls",
+  slab: "Click slab corners · Snap to walls or slab edges to close the outline · Esc finishes",
   door: "Click a wall to place a door · Openings attach to the wall",
   window: "Click a wall to place a window · Openings attach to the wall",
   opening: "Click a wall to create an opening · Adjust its width in Properties",
@@ -60,6 +62,9 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
   const drawPress = useRef<{ point: Point; screen: Point; pointerId: number } | null>(null);
   const fitted = useRef(false);
   const displayPlan = preview ?? plan;
+  const rectangleTool = tool === "rectangle";
+  const slabTool = tool === "slab";
+  const snapWalls = useMemo(() => slabTool ? [...plan.walls, ...slabSnapWalls(plan.slabs)] : plan.walls, [plan.walls, plan.slabs, slabTool]);
   const placingFixture = tool === "fixture" || tool === "stairs";
   const placementCatalogId = tool === "stairs" ? "stairs" : catalogId;
   const groupBox = useMemo(() => selections.length > 1 ? selectionBounds(displayPlan, selections) : null, [displayPlan, selections]);
@@ -113,11 +118,11 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
     return { screen, world: { x: (screen.x - v.x) / v.zoom, y: (screen.y - v.y) / v.zoom } };
   };
   const snapped = (p: Point, shift = false, start = origin) => {
-    let point = settings.snap ? snapPoint(p, plan.walls, settings.grid, 10 / view.zoom, start ?? undefined, settings.orthogonal && !shift) : { ...p };
-    if (!settings.snap && start && settings.orthogonal && !shift && tool !== "rectangle") {
+    let point = settings.snap ? snapPoint(p, snapWalls, settings.grid, 10 / view.zoom, start ?? undefined, settings.orthogonal && !shift) : { ...p };
+    if (!settings.snap && start && settings.orthogonal && !shift && !rectangleTool) {
       if (Math.abs(p.x - start.x) < Math.abs(p.y - start.y)) point.x = start.x; else point.y = start.y;
     }
-    if (start && settings.length > 0 && (tool === "exterior" || tool === "interior")) {
+    if (start && settings.length > 0 && (tool === "exterior" || tool === "interior" || tool === "slab")) {
       const length = distance(start, point);
       if (length) point = { x: start.x + (point.x - start.x) / length * settings.length, y: start.y + (point.y - start.y) / length * settings.length };
     }
@@ -131,6 +136,15 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
   };
   const finishSegment = (from: Point, to: Point) => {
     if (distance(from, to) < 1) return;
+    if (slabTool) {
+      try {
+        const next = addSlabEdges(plan, [from, to]);
+        commit(next);
+        const closes = plan.slabs.some(s => samePoint(s.a, to) || samePoint(s.b, to)) || plan.walls.some(w => project(to, w.a, w.b).distance < .01);
+        setOrigin(closes ? null : to);
+      } catch (e) { error(e instanceof Error ? e.message : "The slab could not be drawn."); }
+      return;
+    }
     if (tool === "rectangle") {
       if (Math.abs(to.x - from.x) < 6 || Math.abs(to.y - from.y) < 6) { error("A room needs at least 6 inches of width and depth."); return; }
       if (plan.walls.length + 4 > 500) { error("This plan has reached the 500-wall limit."); return; }
@@ -198,7 +212,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
       const opening = { id: id(), wallId: closest.w.id, kind: tool, width, t, flip: false, ...(tool === "door" ? { hinge: "left" as const } : {}) };
       commit({ ...plan, openings: [...plan.openings, opening] }); select({ type: "opening", id: opening.id }); return;
     }
-    const p = snapped(world, e.shiftKey, tool === "rectangle" ? null : origin); setHover(p);
+    const p = snapped(world, e.shiftKey, rectangleTool ? null : origin); setHover(p);
     if (origin) { finishSegment(origin, p); drawPress.current = null; }
     else { setOrigin(p); drawPress.current = { point: p, screen, pointerId: e.pointerId }; e.currentTarget.setPointerCapture(e.pointerId); }
   };
@@ -232,6 +246,13 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
         setPreview({ ...snapshot, fixtures: snapshot.fixtures.map(item => item.id === f.id ? moved : item) });
       } else if (d.selection.type === "text") {
         setPreview({ ...snapshot, notes: snapshot.notes.map(n => n.id === d.selection.id ? d.end ? { ...n, width: Math.max(48, Math.min(2400, n.width + delta.x)) } : { ...n, x: n.x + delta.x, y: n.y + delta.y } : n) });
+      } else if (d.selection.type === "slab") {
+        const edge = snapshot.slabs.find(s => s.id === d.selection.id)!;
+        try {
+          const point = settings.snap ? snapPoint(world, [...snapshot.walls, ...slabSnapWalls(snapshot.slabs.filter(s => s.id !== edge.id))], settings.grid, 10 / view.zoom) : world;
+          setPreview(d.end ? moveSlabPoints(snapshot, [{ from: edge[d.end], to: point }]) : moveSlabEdge(snapshot, edge.id, delta));
+          d.error = undefined;
+        } catch (e) { setPreview(null); d.error = e instanceof Error ? e.message : "The slab edge could not be moved."; }
       } else if (d.selection.type === "wall") {
         const w = snapshot.walls.find(w => w.id === d.selection.id)!;
         if (d.end) {
@@ -250,7 +271,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
       return;
     }
     const item = placingFixture ? CATALOG_MAP.get(placementCatalogId) : undefined;
-    setHover(item ? positionFixture({ id: "preview", catalogId: placementCatalogId, x: world.x, y: world.y, width: item.width, depth: item.depth, rotation: placementRotation }) : snapped(world, e.shiftKey, tool === "rectangle" || tool === "text" ? null : origin));
+    setHover(item ? positionFixture({ id: "preview", catalogId: placementCatalogId, x: world.x, y: world.y, width: item.width, depth: item.depth, rotation: placementRotation }) : snapped(world, e.shiftKey, rectangleTool || tool === "text" ? null : origin));
   };
   const pointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     if (marquee.current?.moved || drag.current?.selections.length && drag.current.selections.length > 1) {
@@ -267,7 +288,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
     }
     if (drawPress.current) {
       const press = drawPress.current, { screen, world } = location(e);
-      if (distance(screen, press.screen) > 6) finishSegment(press.point, snapped(world, e.shiftKey, tool === "rectangle" ? null : press.point));
+      if (distance(screen, press.screen) > 6) finishSegment(press.point, snapped(world, e.shiftKey, rectangleTool ? null : press.point));
     }
     drag.current = null; pan.current = null; drawPress.current = null; setPreview(null);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
@@ -279,7 +300,7 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
   const minor = grid * view.zoom >= 5 ? grid : grid * Math.ceil(5 / (grid * view.zoom));
   const major = Math.max(12, minor * Math.ceil(24 / minor));
   const rectangle = origin && hover ? [{ x: origin.x, y: origin.y }, { x: hover.x, y: origin.y }, { x: hover.x, y: hover.y }, { x: origin.x, y: hover.y }] : [];
-  const lineTool = ["exterior", "interior", "electrical", "cold", "hot", "drain"].includes(tool);
+  const lineTool = ["exterior", "interior", "slab", "electrical", "cold", "hot", "drain"].includes(tool);
   const cursor = spacePan || tool === "pan" ? "grab" : tool === "select" ? "default" : "crosshair";
   const dimensionLine = editingDimension ? (() => {
     const mark = displayedDimensionLayout(automaticDimensions(plan), view.zoom).find(mark => mark.dimension.id === editingDimension.id);
@@ -304,15 +325,15 @@ export function PlanCanvas({ plan, tool, settings, layers, selection, selections
       <rect width="100%" height="100%" fill="#14151b" />
       <g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
         {layers.grid ? <rect x={-view.x / view.zoom} y={-view.y / view.zoom} width={size.width / view.zoom} height={size.height / view.zoom} fill="url(#draft-major)" /> : null}
-        {!plan.walls.length && !plan.fixtures.length && !plan.notes.length ? <g pointerEvents="none" transform={`translate(${size.width / 2 / view.zoom - view.x / view.zoom} ${size.height / 2 / view.zoom - view.y / view.zoom})`} textAnchor="middle" fill="#a1a6bc"><text y={-24 / view.zoom} fontSize={23 / view.zoom} fontFamily="sans-serif">A home starts with a line.</text><text y={5 / view.zoom} fontSize={12 / view.zoom}>Choose Exterior wall or Rectangle to start drawing.</text><path d={`M${-12 / view.zoom},${35 / view.zoom}H${12 / view.zoom}M0,${23 / view.zoom}V${47 / view.zoom}`} stroke="#555c73" strokeWidth={1 / view.zoom} /></g> : null}
+        {!plan.walls.length && !plan.slabs.length && !plan.fixtures.length && !plan.notes.length ? <g pointerEvents="none" transform={`translate(${size.width / 2 / view.zoom - view.x / view.zoom} ${size.height / 2 / view.zoom - view.y / view.zoom})`} textAnchor="middle" fill="#a1a6bc"><text y={-24 / view.zoom} fontSize={23 / view.zoom} fontFamily="sans-serif">A home starts with a line.</text><text y={5 / view.zoom} fontSize={12 / view.zoom}>Choose Exterior wall or Rectangle to start drawing.</text><path d={`M${-12 / view.zoom},${35 / view.zoom}H${12 / view.zoom}M0,${23 / view.zoom}V${47 / view.zoom}`} stroke="#555c73" strokeWidth={1 / view.zoom} /></g> : null}
         <PlanArtwork theme="dark" plan={displayPlan} layers={layers} selection={selection} selections={selections} scale={view.zoom} onDimensionEdit={tool === "select" && !spacePan && dimensionEditingAllowed ? startDimensionEdit : undefined} />
         {groupBox && !selectionBox ? <rect data-group-selection="true" pointerEvents="none" x={groupBox.x - 6 / view.zoom} y={groupBox.y - 6 / view.zoom} width={groupBox.width + 12 / view.zoom} height={groupBox.height + 12 / view.zoom} stroke="#818cf8" strokeWidth={1 / view.zoom} strokeDasharray={`${5 / view.zoom} ${4 / view.zoom}`} fill="none" /> : null}
         {selectionBox ? <rect data-selection-marquee="true" pointerEvents="none" x={Math.min(selectionBox.a.x, selectionBox.b.x)} y={Math.min(selectionBox.a.y, selectionBox.b.y)} width={Math.abs(selectionBox.b.x - selectionBox.a.x)} height={Math.abs(selectionBox.b.y - selectionBox.a.y)} fill="#818cf8" fillOpacity="0.1" stroke="#a5a7fa" strokeWidth={1 / view.zoom} strokeDasharray={`${4 / view.zoom} ${3 / view.zoom}`} /> : null}
         {dimensionLine ? <g pointerEvents="none" stroke="#a5a7fa" fill="#14151b" strokeWidth={1.5 / view.zoom} data-dimension-edit-guide="true"><path d={`M${dimensionLine.a.x},${dimensionLine.a.y}L${dimensionLine.b.x},${dimensionLine.b.y}`} /><circle cx={dimensionLine.moving.x} cy={dimensionLine.moving.y} r={4 / view.zoom} /></g> : null}
         {hover && tool !== "select" && tool !== "pan" ? <g pointerEvents="none" stroke="#818cf8" fill="none" strokeWidth={1 / view.zoom}>
           {tool === "text" ? <g transform={`translate(${hover.x} ${hover.y})`} opacity="0.7"><rect width="144" height="28" strokeDasharray="4 2" /><text x="8" y="16" fontFamily="monospace" fontSize="8" stroke="none" fill="#818cf8">Construction note</text></g> : null}
-          {origin && lineTool ? <><path d={`M${origin.x},${origin.y}L${hover.x},${hover.y}`} strokeWidth={tool === "exterior" ? settings.exteriorThickness : tool === "interior" ? settings.interiorThickness : 1.5 / view.zoom} stroke={lineTool && tool in UTILITY_COLORS ? UTILITY_COLORS[tool as Utility["kind"]] : "#818cf8"} strokeOpacity="0.6" /><g transform={`translate(${(origin.x + hover.x) / 2} ${(origin.y + hover.y) / 2 - 12 / view.zoom})`}><rect x={-50 / view.zoom} y={-14 / view.zoom} width={100 / view.zoom} height={21 / view.zoom} rx={4 / view.zoom} fill="#37395e" stroke="none" /><text textAnchor="middle" fontSize={11 / view.zoom} fill="white" stroke="none" fontFamily="monospace">{formatLength(distance(origin, hover))}</text></g></> : null}
-          {origin && tool === "rectangle" ? <><polygon points={polygonString(rectangle)} fill="#818cf8" fillOpacity="0.07" strokeDasharray={`${6 / view.zoom} ${3 / view.zoom}`} strokeWidth={settings.exteriorThickness} /><text x={(origin.x + hover.x) / 2} y={(origin.y + hover.y) / 2} textAnchor="middle" fontSize={12 / view.zoom} fill="#818cf8" stroke="none">{formatLength(Math.abs(hover.x - origin.x))} × {formatLength(Math.abs(hover.y - origin.y))}</text></> : null}
+          {origin && lineTool ? <><path d={`M${origin.x},${origin.y}L${hover.x},${hover.y}`} strokeWidth={tool === "slab" ? 3 : tool === "exterior" ? settings.exteriorThickness : tool === "interior" ? settings.interiorThickness : 1.5 / view.zoom} strokeDasharray={tool === "slab" ? "1 8" : undefined} strokeLinecap={tool === "slab" ? "round" : undefined} stroke={tool === "slab" ? "#fff" : tool in UTILITY_COLORS ? UTILITY_COLORS[tool as Utility["kind"]] : "#818cf8"} strokeOpacity="0.6" /><g transform={`translate(${(origin.x + hover.x) / 2} ${(origin.y + hover.y) / 2 - 12 / view.zoom})`}><rect x={-50 / view.zoom} y={-14 / view.zoom} width={100 / view.zoom} height={21 / view.zoom} rx={4 / view.zoom} fill="#37395e" stroke="none" /><text textAnchor="middle" fontSize={11 / view.zoom} fill="white" stroke="none" fontFamily="monospace">{formatLength(distance(origin, hover))}</text></g></> : null}
+          {origin && rectangleTool ? <><polygon points={polygonString(rectangle)} fill="#818cf8" fillOpacity="0.07" stroke="#818cf8" strokeDasharray={`${6 / view.zoom} ${3 / view.zoom}`} strokeWidth={settings.exteriorThickness} /><text x={(origin.x + hover.x) / 2} y={(origin.y + hover.y) / 2} textAnchor="middle" fontSize={12 / view.zoom} fill="#818cf8" stroke="none">{formatLength(Math.abs(hover.x - origin.x))} × {formatLength(Math.abs(hover.y - origin.y))}</text></> : null}
           {placingFixture && item ? <g data-fixture-preview="true" transform={`translate(${hover.x} ${hover.y}) rotate(${placementRotation})`}><polygon points={polygonString(fixtureCorners({ id: "preview", catalogId: placementCatalogId, x: 0, y: 0, width: previewWidth, depth: previewDepth, rotation: 0 }))} strokeDasharray="3 2" /><g transform={`translate(${-previewWidth / 2} ${-previewDepth / 2}) scale(${previewWidth / 100} ${previewDepth / 100})`} color="#818cf8" opacity="0.5" strokeWidth="2"><FixtureSymbol symbol={item.symbol} steps={item.steps} dark /></g></g> : null}
           <circle cx={hover.x} cy={hover.y} r={4 / view.zoom} fill="#14151b" /><path d={`M${hover.x - 9 / view.zoom},${hover.y}H${hover.x + 9 / view.zoom}M${hover.x},${hover.y - 9 / view.zoom}V${hover.y + 9 / view.zoom}`} />
         </g> : null}

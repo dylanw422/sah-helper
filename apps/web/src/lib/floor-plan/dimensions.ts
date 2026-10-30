@@ -1,7 +1,8 @@
 import { bounds, detectRooms, distance, lerp, project, samePoint, wallFaceGeometry, type Room } from "./geometry";
 import type { Plan, Point, Wall } from "./model";
 import { roomDimensions } from "./room-dimensions";
-export type Dimension = { id: string; a: Point; b: Point; offset: number; value: number; overall?: boolean; roomId?: string; openingId?: string; hideLabel?: boolean; interior?: boolean; doorway?: boolean; exteriorFace?: boolean };
+import { slabDimensions } from "./slabs";
+export type Dimension = { id: string; a: Point; b: Point; offset: number; value: number; overall?: boolean; roomId?: string; slabId?: string; openingId?: string; hideLabel?: boolean; interior?: boolean; doorway?: boolean; exteriorFace?: boolean };
 
 function exteriorOffset(wall: Wall, a: Point, b: Point, rooms: Room[]): number {
   const midpoint = lerp(a, b, 0.5);
@@ -74,7 +75,7 @@ function exteriorFaceDimensions(dimensions: Dimension[], walls: Wall[], rooms: R
   });
 }
 
-export function automaticDimensions(plan: Pick<Plan, "walls" | "openings">, suppliedRooms?: Room[]): Dimension[] {
+export function automaticDimensions(plan: Pick<Plan, "walls" | "openings"> & Partial<Pick<Plan, "slabs">>, suppliedRooms?: Room[]): Dimension[] {
   const dims: Dimension[] = [];
   const rooms = suppliedRooms ?? detectRooms(plan.walls);
   const roomWallIds = new Set(rooms.flatMap(r => r.wallIds));
@@ -163,7 +164,7 @@ export function automaticDimensions(plan: Pick<Plan, "walls" | "openings">, supp
     if (dim) Object.assign(dim, { a, b, value: opening.width, offset: 0, openingId: opening.id, interior: true, doorway: true });
     else dimensions.push({ id: `doorway:${opening.id}`, a, b, value: opening.width, offset: 0, openingId: opening.id, interior: true, doorway: true });
   }
-  return dimensions;
+  return [...dimensions, ...slabDimensions({ walls: plan.walls, slabs: plan.slabs ?? [] })];
 }
 export function wallSegments(wall: Wall, plan: Pick<Plan, "openings">): { a: Point; b: Point }[] {
   const length = distance(wall.a, wall.b);

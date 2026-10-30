@@ -1,5 +1,5 @@
 import { wallSegments } from "./dimensions";
-import { bounds, distance, fitOpening, fixtureCorners, lerp, pointInPolygon, project, wallFaceGeometry } from "./geometry";
+import { bounds, distance, fitOpening, fixtureCorners, lerp, pointInPolygon, project, slabsFollowingWalls, wallFaceGeometry } from "./geometry";
 import { parsePlan, type Layers, type Plan, type Point, type Selection } from "./model";
 import { constrainWallAngles } from "./wall-constraints";
 import { noteCorners } from "./notes";
@@ -33,11 +33,13 @@ function selectionPolygons(plan: Plan, selection: Selection): Point[][] {
   if (selection.type === "fixture") { const f = plan.fixtures.find(f => f.id === selection.id); return f ? [fixtureCorners(f)] : []; }
   if (selection.type === "text") { const n = plan.notes.find(n => n.id === selection.id); return n ? [notePolygon(n)] : []; }
   if (selection.type === "utility") { const u = plan.utilities.find(u => u.id === selection.id); return u ? [segmentPolygon(u.a, u.b, 1.5)] : []; }
+  if (selection.type === "slab") { const s = plan.slabs.find(s => s.id === selection.id); return s ? [segmentPolygon(s.a, s.b, 3)] : []; }
   return [];
 }
 export function visibleSelections(plan: Plan, layers: Layers): Selection[] {
   return [
     ...plan.walls.map(w => ({ type: "wall" as const, id: w.id })),
+    ...plan.slabs.map(s => ({ type: "slab" as const, id: s.id })),
     ...plan.openings.map(o => ({ type: "opening" as const, id: o.id })),
     ...(layers.fixtures ? plan.fixtures.map(f => ({ type: "fixture" as const, id: f.id })) : []),
     ...(layers.utilities ? plan.utilities.map(u => ({ type: "utility" as const, id: u.id })) : []),
@@ -76,6 +78,7 @@ export function deleteSelection(plan: Plan, selections: Selection[]): Plan {
   const keys = new Set(selections.map(selectionKey)), has = (type: Selection["type"], id: string) => keys.has(`${type}:${id}`);
   return { ...plan,
     walls: plan.walls.filter(w => !has("wall", w.id)),
+    slabs: plan.slabs.filter(s => !has("slab", s.id)),
     openings: plan.openings.filter(o => !has("opening", o.id) && !has("wall", o.wallId)),
     fixtures: plan.fixtures.filter(f => !has("fixture", f.id)),
     utilities: plan.utilities.filter(u => !has("utility", u.id)),
@@ -86,6 +89,7 @@ export function deleteSelection(plan: Plan, selections: Selection[]): Plan {
 export function moveSelection(plan: Plan, selections: Selection[], delta: Point): Plan {
   const keys = new Set(selections.map(selectionKey)), has = (type: Selection["type"], id: string) => keys.has(`${type}:${id}`);
   const movedWalls = plan.walls.filter(w => has("wall", w.id));
+  const movedSlabs = plan.slabs.filter(s => has("slab", s.id));
   const translate = (p: Point) => ({ x: p.x + delta.x, y: p.y + delta.y });
   // Shared corners and endpoints of attached walls follow exactly once, even
   // when multiple selected walls meet at the same junction.
@@ -106,6 +110,10 @@ export function moveSelection(plan: Plan, selections: Selection[], delta: Point)
     if (t === null || Math.abs(t - opening.t) * distance(wall.a, wall.b) > .01) throw new Error(opening.kind === "opening" ? "This move would push an opening beyond its wall or overlap another opening. Choose a different position." : "This move would push an opening beyond its wall, overlap another opening, or leave less than 4″ between a door or window and an adjacent wall. Choose a different position.");
   }
   return parsePlan({ ...plan, walls, openings,
+    slabs: slabsFollowingWalls(plan, walls).map((s, i) => {
+      const move = (end: "a" | "b") => movedSlabs.some(edge => distance(edge.a, plan.slabs[i][end]) < .01 || distance(edge.b, plan.slabs[i][end]) < .01) ? translate(plan.slabs[i][end]) : s[end];
+      return { ...s, a: move("a"), b: move("b") };
+    }),
     fixtures: plan.fixtures.map(f => has("fixture", f.id) ? { ...f, ...translate(f) } : f),
     notes: plan.notes.map(n => has("text", n.id) ? { ...n, ...translate(n) } : n),
     utilities: plan.utilities.map(u => has("utility", u.id) ? { ...u, a: translate(u.a), b: translate(u.b) } : u),

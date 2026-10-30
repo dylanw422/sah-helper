@@ -24,7 +24,7 @@ export function fixtureCorners(f: Fixture): Point[] {
   return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => ({ x: f.x + x * f.width / 2 * c - y * f.depth / 2 * s, y: f.y + x * f.width / 2 * s + y * f.depth / 2 * c }));
 }
 export function planBounds(plan: Plan) {
-  return bounds([...plan.walls.flatMap(w => [w.a, w.b]), ...plan.fixtures.flatMap(fixtureCorners), ...plan.utilities.flatMap(u => [u.a, u.b]), ...plan.notes.flatMap(noteCorners)]);
+  return bounds([...plan.walls.flatMap(w => [w.a, w.b]), ...plan.slabs.flatMap(s => [s.a, s.b]), ...plan.fixtures.flatMap(fixtureCorners), ...plan.utilities.flatMap(u => [u.a, u.b]), ...plan.notes.flatMap(noteCorners)]);
 }
 export function polygonArea(points: Point[]) {
   return points.reduce((s, p, i) => s + cross(p, points[(i + 1) % points.length]), 0) / 2;
@@ -73,7 +73,7 @@ export type Room = { id: string; points: Point[]; inner: Point[]; wallIds: strin
 
 // Build a planar graph, including T junctions, crossing walls and collinear splits.
 // Walking directed edges extracts bounded faces instead of guessing from a bounding box.
-export function detectRooms(walls: Wall[]): Room[] {
+export function detectRooms(walls: Wall[], minimumArea = 144): Room[] {
   const active = walls.filter(w => distance(w.a, w.b) >= 0.5);
   const splits = active.map(w => [w.a, w.b]);
   for (let i = 0; i < active.length; i++) for (let j = i + 1; j < active.length; j++) {
@@ -115,7 +115,7 @@ export function detectRooms(walls: Wall[]): Room[] {
       const reverse = next.edges.findIndex(e => e.to === from);
       from = edge.to; edge = next.edges[(reverse - 1 + next.edges.length) % next.edges.length];
     }
-    if (!closed || points.length < 3 || polygonArea(points) <= 144) continue;
+    if (!closed || points.length < 3 || polygonArea(points) <= minimumArea) continue;
     // Remove dangling walls traversed in both directions from a face boundary.
     let changed = true;
     while (changed && points.length >= 3) {
@@ -337,7 +337,9 @@ export function moveWallPoint(plan: Plan, wallId: string, end: "a" | "b", to: Po
   const proposed = plan.walls.map(w => ({ ...w, a: move(w.a), b: move(w.b) }));
   const walls = constrainWallAngles(plan.walls, proposed, wallPointTargets(plan.walls, wallId, end, to));
   if (!walls || walls.some(w => distance(w.a, w.b) < 1)) return plan;
-  return { ...plan, walls, openings: normalizeOpenings(walls, plan.openings) };
+  const slabs = slabsFollowingWalls(plan, walls);
+  if (slabs.some(s => distance(s.a, s.b) < 1)) return plan;
+  return { ...plan, walls, slabs, openings: normalizeOpenings(walls, plan.openings) };
 }
 export function moveWalls(plan: Plan, wallIds: string[], delta: Point): Plan {
   const selected = plan.walls.filter(w => wallIds.includes(w.id));
@@ -347,7 +349,18 @@ export function moveWalls(plan: Plan, wallIds: string[], delta: Point): Plan {
   if (proposed.some(w => distance(w.a, w.b) < 1)) return plan;
   const walls = constrainWallAngles(plan.walls, proposed, new Map(selected.map(w => [w.id, translate(lerp(w.a, w.b, .5))])));
   if (!walls || walls.some(w => distance(w.a, w.b) < 1)) return plan;
-  return { ...plan, walls, openings: normalizeOpenings(walls, plan.openings) };
+  const slabs = slabsFollowingWalls(plan, walls);
+  if (slabs.some(s => distance(s.a, s.b) < 1)) return plan;
+  return { ...plan, walls, slabs, openings: normalizeOpenings(walls, plan.openings) };
+}
+export function slabsFollowingWalls(plan: Plan, walls: Wall[]) {
+  const byId = new Map(walls.map(w => [w.id, w]));
+  const move = (point: Point) => {
+    const host = plan.walls.find(w => project(point, w.a, w.b).distance < EPS);
+    const next = host && byId.get(host.id);
+    return host && next ? lerp(next.a, next.b, project(point, host.a, host.b).t) : point;
+  };
+  return plan.slabs.map(s => ({ ...s, a: move(s.a), b: move(s.b) }));
 }
 export function normalizeOpenings(walls: Wall[], openings: Opening[]) {
   const accepted: Opening[] = [];
