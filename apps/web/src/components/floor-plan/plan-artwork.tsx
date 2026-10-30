@@ -7,6 +7,7 @@ import { roofLayouts } from "@/lib/floor-plan/roof";
 import { noteLayout } from "@/lib/floor-plan/notes";
 import { selectionKey } from "@/lib/floor-plan/selection";
 import { dimensionOpening } from "@/lib/floor-plan/edit-dimension";
+import { isSlabArea, slabAreas } from "@/lib/floor-plan/slabs";
 import type { Layers, Plan, Point, Selection } from "@/lib/floor-plan/model";
 import { FixtureSymbol } from "./fixture-symbol";
 
@@ -15,6 +16,8 @@ function artworkPalette(dark: boolean, monochrome: boolean) {
 }
 
 export const UTILITY_COLORS = { electrical: "#b2811c", cold: "#267bab", hot: "#b65044", drain: "#7d637f" };
+export const EXTERIOR_WALL_COLORS = { dark: "#757988", paper: "#61736a", monochrome: "#ddd" };
+export const SLAB_DASH_PATTERN = "8 5";
 
 function labelPosition(room: Room, obstacles: ReturnType<typeof bounds>[], dimensions: LabelBounds[], width: number, height: number): Point | null {
   const box = bounds(room.inner);
@@ -73,6 +76,8 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
   const dark = theme === "dark", monochrome = theme === "monochrome";
   const paint = artworkPalette(dark, monochrome);
   const detected = useMemo(() => suppliedRooms ?? detectRooms(plan.walls), [plan.walls, suppliedRooms]);
+  const slabRooms = useMemo(() => slabAreas({ walls: plan.walls, slabs: plan.slabs }), [plan.walls, plan.slabs]);
+  const labeledAreas = useMemo(() => [...detected, ...slabRooms], [detected, slabRooms]);
   const roofs = useMemo(() => layers.roof ? roofLayouts(plan) : [], [plan.walls, plan.roofOverhang, plan.roofType, layers.roof]);
   const dims = useMemo(() => layers.dimensions ? automaticDimensions({ walls: plan.walls, openings: plan.openings, slabs: plan.slabs }, detected) : [], [plan.walls, plan.openings, plan.slabs, detected, layers.dimensions]);
   const dimensionLayout = useMemo(() => displayedDimensionLayout(dims, scale), [dims, scale]);
@@ -86,10 +91,11 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
   const selected = (type: Selection["type"], id: string) => selectedKeys.has(`${type}:${id}`);
   return <>
     <PlanDefs prefix={prefix} dark={dark} monochrome={monochrome} />
-    <g data-layer="rooms">{detected.map(room => {
+    <g data-layer="rooms">{labeledAreas.map(room => {
       const info = plan.rooms[room.id];
       return <polygon key={room.id} points={polygonString(room.inner)} data-kind="room" data-id={room.id}
-        fill={layers.finishes && info?.finish && info.finish !== "none" ? `url(#${prefix}-${info.finish})` : paint("#1c1e25", "#fafbf7", "#fff")}
+        data-slab-area={isSlabArea(room) ? room.id : undefined}
+        fill={layers.finishes && info?.finish && info.finish !== "none" ? `url(#${prefix}-${info.finish})` : isSlabArea(room) ? "transparent" : paint("#1c1e25", "#fafbf7", "#fff")}
         stroke={selected("room", room.id) ? paint("#818cf8", "#0e8c7c") : "none"} strokeWidth="2" />;
     })}</g>
     {layers.roof ? <g data-layer="roof" data-roof-type={plan.roofType} pointerEvents="none" fill="none" stroke={paint("#d0ac68", "#a67d3a")} strokeWidth="1" strokeDasharray="7 4" opacity="0.5">
@@ -100,7 +106,7 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
     </g> : null}
     <g data-layer="slabs">{plan.slabs.map(edge => <g key={edge.id} data-kind="slab" data-id={edge.id}>
       <path d={`M${edge.a.x},${edge.a.y}L${edge.b.x},${edge.b.y}`} fill="none" stroke="transparent" strokeWidth={12 / scale} />
-      <path data-slab-edge={edge.id} d={`M${edge.a.x},${edge.a.y}L${edge.b.x},${edge.b.y}`} fill="none" stroke={selected("slab", edge.id) ? paint("#a5a7fa", "#0e8c7c") : paint("#fff", "#52635c")} strokeWidth="3" strokeDasharray="1 8" strokeLinecap="round" pointerEvents="none" />
+      <path data-slab-edge={edge.id} d={`M${edge.a.x},${edge.a.y}L${edge.b.x},${edge.b.y}`} fill="none" stroke={selected("slab", edge.id) ? paint("#a5a7fa", "#0e8c7c") : EXTERIOR_WALL_COLORS[theme]} strokeWidth="3" strokeDasharray={SLAB_DASH_PATTERN} strokeLinecap="butt" pointerEvents="none" />
       {selection?.type === "slab" && selection.id === edge.id ? (["a", "b"] as const).map(end => <circle key={end} cx={edge[end].x} cy={edge[end].y} r={5 / scale} fill={paint("#22242c", "#fff")} stroke={paint("#a5a7fa", "#0e8c7c")} strokeWidth={1.5 / scale} data-kind="slab" data-id={edge.id} data-end={end} />) : null}
     </g>)}</g>
     <g data-layer="walls">
@@ -110,7 +116,7 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
       const active = selected("wall", w.id);
       return <g key={w.id} data-kind="wall" data-id={w.id}>
         <path d={`M${w.a.x},${w.a.y}L${w.b.x},${w.b.y}`} stroke="transparent" strokeWidth={Math.max(w.thickness, 10 / scale)} fill="none" />
-        {segments.map((segment, i) => <path key={i} data-wall-body={w.id} d={`M${segment.a.x},${segment.a.y}L${segment.b.x},${segment.b.y}`} fill="none" stroke={active ? paint("#37395e", "#b9e4d8") : w.kind === "exterior" ? paint("#757988", "#61736a", "#ddd") : paint("#555966", "#a4afa5", "#ddd")} strokeWidth={Math.max(0.5, w.thickness - 1)} strokeLinecap="square" />)}
+        {segments.map((segment, i) => <path key={i} data-wall-body={w.id} d={`M${segment.a.x},${segment.a.y}L${segment.b.x},${segment.b.y}`} fill="none" stroke={active ? paint("#37395e", "#b9e4d8") : w.kind === "exterior" ? EXTERIOR_WALL_COLORS[theme] : paint("#555966", "#a4afa5", "#ddd")} strokeWidth={Math.max(0.5, w.thickness - 1)} strokeLinecap="square" />)}
       </g>;
     })}
       {selection?.type === "wall" ? plan.walls.filter(w => w.id === selection.id).flatMap(w => [w.a, w.b].map((p, i) => <circle key={`${w.id}:${i}`} cx={p.x} cy={p.y} r={5 / scale} fill={paint("#22242c", "#fff", "#fff")} stroke={paint("#818cf8", "#0e8c7c")} strokeWidth={1.5 / scale} data-kind="wall" data-id={w.id} data-end={i ? "b" : "a"} />)) : null}
@@ -140,17 +146,17 @@ export const PlanArtwork = memo(function PlanArtwork({ plan, layers, selection, 
       <path d={`M${u.a.x},${u.a.y}L${u.b.x},${u.b.y}`} fill="none" stroke={selected("utility", u.id) ? paint("#818cf8", "#0e8c7c") : monochrome ? "#000" : UTILITY_COLORS[u.kind]} strokeWidth={1.5 / scale} strokeDasharray={u.kind === "electrical" ? "6 3" : u.kind === "drain" ? "9 3 2 3" : monochrome && u.kind === "hot" ? "4 2" : undefined} />
       {[u.a, u.b].map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={2 / scale} fill={monochrome ? "#000" : UTILITY_COLORS[u.kind]} />)}
     </g>)}</g> : null}
-    {layers.labels ? <g data-layer="labels" pointerEvents="none">{detected.map((room, i) => {
+    {layers.labels ? <g data-layer="labels" pointerEvents="none">{labeledAreas.map((room, i) => {
       const box = bounds(room.inner), info = plan.rooms[room.id];
       const maxChars = Math.max(1, Math.floor((box.width - 10) / (fontSize * .7 * 1.13)));
-      const name = info?.name ?? `ROOM ${i + 1}`, nameLabel = name.length > maxChars ? `${name.slice(0, maxChars - 1)}…` : name;
+      const name = info?.name ?? (isSlabArea(room) ? `SLAB ${i - detected.length + 1}` : `ROOM ${i + 1}`), nameLabel = name.length > maxChars ? `${name.slice(0, maxChars - 1)}…` : name;
       const rowFontSize = (index: number) => fontSize * (index === 0 ? 1.13 : .9);
       let rows = [nameLabel, `${dimensionLabel(Math.round(box.width))} × ${dimensionLabel(Math.round(box.height))}`];
       const position = () => labelPosition(room, obstacles, dimensionLabels, Math.max(...rows.map((row, index) => row.length * rowFontSize(index) * .62)) + 4, rows.length * fontSize * 1.45 + 4);
       let center = position();
       if (!center) { rows = rows.slice(0, 1); center = position(); }
       if (!center) return null;
-      return <g key={room.id} data-room-label={room.id} transform={`translate(${center.x} ${center.y})`} textAnchor="middle" fontFamily="monospace" fill={paint("#c9ccda", "#34564e")} stroke={paint("#1c1e25", "#fafbf7", "#fff")} strokeWidth="3" paintOrder="stroke">
+      return <g key={room.id} data-room-label={room.id} data-slab-label={isSlabArea(room) ? room.id : undefined} transform={`translate(${center.x} ${center.y})`} textAnchor="middle" fontFamily="monospace" fill={paint("#c9ccda", "#34564e")} stroke={paint("#1c1e25", "#fafbf7", "#fff")} strokeWidth="3" paintOrder="stroke">
         <title>{name}</title>
         {rows.map((row, index) => <text key={index} y={(index - (rows.length - 1) / 2) * fontSize * 1.45 + fontSize * 0.35} fontSize={rowFontSize(index)} fontWeight={index === 0 ? 600 : undefined}>{row}</text>)}
       </g>;

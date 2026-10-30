@@ -14,7 +14,7 @@ import { dimensionEnds, editDimension } from "../apps/web/src/lib/floor-plan/edi
 import { snapFixtureToWalls } from "../apps/web/src/lib/floor-plan/fixture-snapping";
 import { CATALOG } from "../apps/web/src/lib/floor-plan/catalog";
 import { cabinetPlacementClear, snapCabinet } from "../apps/web/src/lib/floor-plan/cabinet-snapping";
-import { addSlabEdges, moveSlabEdge, moveSlabPoints, slabAreas, slabSnapWalls } from "../apps/web/src/lib/floor-plan/slabs";
+import { addSlabEdges, isSlabArea, moveSlabEdge, moveSlabPoints, slabAreas, slabSnapWalls } from "../apps/web/src/lib/floor-plan/slabs";
 
 describe("concrete slabs", () => {
   const pad = () => addSlabEdges(blankPlan(), [{ x: 0, y: 0 }, { x: 120, y: 0 }, { x: 120, y: 72 }, { x: 0, y: 72 }], true);
@@ -52,10 +52,35 @@ describe("concrete slabs", () => {
   test("a slab can close between perpendicular walls, while a dangling line stays undimensioned", () => {
     let plan = rectangle();
     plan = addSlabEdges(plan, [{ x: 0, y: 60 }, { x: 60, y: 60 }, { x: 60, y: 0 }]);
+    expect(slabAreas(plan)).toHaveLength(1);
+    expect(slabAreas(plan)[0].area).toBeCloseTo(25);
     expect(automaticDimensions(plan).filter(d => d.slabId).map(d => d.value)).toEqual([60, 60]);
     const dangling = addSlabEdges(rectangle(), [{ x: 120, y: 0 }, { x: 120, y: 60 }]);
     expect(slabAreas(dangling)).toHaveLength(0);
     expect(automaticDimensions(dangling).some(d => d.slabId)).toBe(false);
+  });
+
+  test("closed slabs have stable label identities and retain their names after resizing and backup", () => {
+    const plan = pad(), area = slabAreas(plan)[0];
+    expect(isSlabArea(area)).toBe(true);
+    plan.rooms[area.id] = { name: "PATIO", finish: "concrete" };
+    const resized = moveSlabEdge(plan, plan.slabs[1].id, { x: 24, y: 0 });
+    expect(slabAreas(resized)[0].id).toBe(area.id);
+    const restored = parsePlan(JSON.parse(JSON.stringify(resized)));
+    expect(restored.rooms[slabAreas(restored)[0].id]).toEqual({ name: "PATIO", finish: "concrete" });
+    expect(detectRooms(restored.walls)).toHaveLength(0);
+    const open = deleteSelection(restored, [{ type: "slab", id: restored.slabs[0].id }]);
+    expect(slabAreas(open)).toHaveLength(0);
+  });
+
+  test("adjoining closed slabs each get an area without duplicating shared boundary dimensions", () => {
+    let plan = pad();
+    plan = addSlabEdges(plan, [{ x: 120, y: 0 }, { x: 240, y: 0 }, { x: 240, y: 72 }, { x: 120, y: 72 }]);
+    expect(slabAreas(plan)).toHaveLength(2);
+    expect(slabAreas(plan).map(a => a.area)).toEqual([60, 60]);
+    const dimensions = automaticDimensions(plan).filter(d => d.slabId);
+    expect(dimensions).toHaveLength(7);
+    expect(new Set(dimensions.map(d => d.id)).size).toBe(7);
   });
 
   test("rotating a pad or reversing its edges preserves measurements", () => {

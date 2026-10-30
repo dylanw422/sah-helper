@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { CATALOG_MAP } from "@/lib/floor-plan/catalog";
 import { bounds, distance, fitOpening, moveWallPoint, normalizeOpenings, type Room } from "@/lib/floor-plan/geometry";
 import { DEFAULT_STAIR_STEPS, MAX_STAIR_STEPS, FINISHES, formatLength, type Plan, type Selection, type TextNote } from "@/lib/floor-plan/model";
-import { moveSlabPoints } from "@/lib/floor-plan/slabs";
+import { isSlabArea, moveSlabPoints } from "@/lib/floor-plan/slabs";
 
 function NoteText({ note, onChange }: { note: TextNote; onChange: (text: string) => void }) {
   return <label className="fp-field"><span>Construction note</span><textarea aria-label="Construction note" rows={6} maxLength={2000} value={note.text} onChange={e => onChange(e.target.value)} autoFocus onFocus={e => { if (e.target.value === "Construction note") e.target.select(); }} placeholder="Describe the construction work…" /></label>;
@@ -41,7 +41,9 @@ export function PropertyPanel({ plan, selection, selections, rooms, commit, remo
   const utility = selection.type === "utility" ? plan.utilities.find(u => u.id === selection.id) : undefined;
   const note = selection.type === "text" ? plan.notes.find(n => n.id === selection.id) : undefined;
   const room = selection.type === "room" ? rooms.find(r => r.id === selection.id) : undefined;
-  const title = slab ? "Concrete slab edge" : wall ? `${wall.kind === "exterior" ? "Exterior" : "Interior"} wall` : fixture ? CATALOG_MAP.get(fixture.catalogId)?.name ?? "Fixture" : opening ? `${opening.kind === "door" ? "Door" : opening.kind === "window" ? "Window" : "Opening"}` : room ? "Room & finish" : utility ? "Utility run" : note ? "Construction note" : "Selection";
+  const slabRoom = room && isSlabArea(room);
+  const defaultRoomName = room ? slabRoom ? `SLAB ${rooms.filter(isSlabArea).findIndex(r => r.id === room.id) + 1}` : `Room ${rooms.indexOf(room) + 1}` : "";
+  const title = slab ? "Concrete slab edge" : wall ? `${wall.kind === "exterior" ? "Exterior" : "Interior"} wall` : fixture ? CATALOG_MAP.get(fixture.catalogId)?.name ?? "Fixture" : opening ? `${opening.kind === "door" ? "Door" : opening.kind === "window" ? "Window" : "Opening"}` : room ? slabRoom ? "Slab & finish" : "Room & finish" : utility ? "Utility run" : note ? "Construction note" : "Selection";
   const updateSlabPoint = (end: "a" | "b", point: { x: number; y: number }) => {
     if (!slab) return;
     try { commit(moveSlabPoints(plan, [{ from: slab[end], to: point }])); }
@@ -109,13 +111,13 @@ export function PropertyPanel({ plan, selection, selections, rooms, commit, remo
       <p className="fp-field-note">Text wraps to fit the box. Drag the note to move it, or drag its right handle to change the width.</p>
     </> : null}
     {room ? <>
-      <label className="fp-field"><span>Room name</span><input aria-label="Room name" maxLength={80} key={room.id} defaultValue={plan.rooms[room.id]?.name ?? `Room ${rooms.indexOf(room) + 1}`} onBlur={e => {
-        const name = e.target.value.trim() || `Room ${rooms.indexOf(room) + 1}`;
+      <label className="fp-field"><span>Room name</span><input aria-label="Room name" maxLength={80} key={room.id} defaultValue={plan.rooms[room.id]?.name ?? defaultRoomName} onBlur={e => {
+        const name = e.target.value.trim() || defaultRoomName;
         commit({ ...plan, rooms: { ...plan.rooms, [room.id]: { name, finish: plan.rooms[room.id]?.finish ?? "none" } } });
       }} /></label>
-      <span className="fp-field-label">Floor finish</span><div className="fp-finish-list">{FINISHES.map(f => <button key={f.id} className={(plan.rooms[room.id]?.finish ?? "none") === f.id ? "is-active" : ""} onClick={() => commit({ ...plan, rooms: { ...plan.rooms, [room.id]: { name: plan.rooms[room.id]?.name ?? `Room ${rooms.indexOf(room) + 1}`, finish: f.id } } })}><span style={{ background: f.color }} />{f.name}</button>)}</div>
-      <div className="fp-measure-card"><span>Usable floor area</span><strong>{room.area.toFixed(1)} <small>sq ft</small></strong><span>{formatLength(bounds(room.inner).width)} × {formatLength(bounds(room.inner).height)}</span></div>
-      <p className="fp-field-note">Area uses inside wall faces. Dimensions show the room’s clear bounding width and depth.</p>
+      <span className="fp-field-label">Floor finish</span><div className="fp-finish-list">{FINISHES.map(f => <button key={f.id} className={(plan.rooms[room.id]?.finish ?? "none") === f.id ? "is-active" : ""} onClick={() => commit({ ...plan, rooms: { ...plan.rooms, [room.id]: { name: plan.rooms[room.id]?.name ?? defaultRoomName, finish: f.id } } })}><span style={{ background: f.color }} />{f.name}</button>)}</div>
+      <div className="fp-measure-card"><span>{slabRoom ? "Slab area" : "Usable floor area"}</span><strong>{room.area.toFixed(1)} <small>sq ft</small></strong><span>{formatLength(bounds(room.inner).width)} × {formatLength(bounds(room.inner).height)}</span></div>
+      <p className="fp-field-note">{slabRoom ? "Area and dimensions use the closed slab outline. Slabs are separate from the home's usable floor area." : "Area uses inside wall faces. Dimensions show the room’s clear bounding width and depth."}</p>
     </> : <div className="fp-property-actions">{fixture ? <button className="fp-button" onClick={rotate}><RotateCw size={15} />Rotate</button> : null}{fixture || note ? <button className="fp-button" onClick={duplicate}><Copy size={15} />Copy</button> : null}<button className="fp-button fp-danger" onClick={remove}><Trash2 size={15} />Delete</button></div>}
   </div>;
 }

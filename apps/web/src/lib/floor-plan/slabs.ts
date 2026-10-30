@@ -1,10 +1,20 @@
-import { detectRooms, distance, project, samePoint } from "./geometry";
+import { detectRooms, distance, project, samePoint, type Room } from "./geometry";
 import { id, parsePlan, type Plan, type Point, type SlabEdge, type Wall } from "./model";
 import type { Dimension } from "./dimensions";
 import { constrainWallAngles } from "./wall-constraints";
 
 export function slabSnapWalls(slabs: SlabEdge[]): Wall[] {
   return slabs.map(edge => ({ ...edge, thickness: 0, kind: "interior" }));
+}
+
+export const isSlabArea = (area: Room) => area.id.startsWith("slab-area:");
+const spanKey = (a: Point, b: Point) => [a, b].map(p => `${p.x.toFixed(4)},${p.y.toFixed(4)}`).sort().join(":");
+function boundarySpans(plan: Pick<Plan, "slabs">, area: Room) {
+  return area.points.flatMap((a, index) => {
+    const b = area.points[(index + 1) % area.points.length];
+    const slab = plan.slabs.find(edge => project(a, edge.a, edge.b).distance < .01 && project(b, edge.a, edge.b).distance < .01);
+    return slab ? [{ slab, a, b, key: spanKey(a, b) }] : [];
+  });
 }
 
 // Slabs use their own graph: they can close against a wall without becoming
@@ -15,18 +25,27 @@ export function slabAreas(plan: Pick<Plan, "walls" | "slabs">) {
     ...plan.walls.map(w => ({ ...w, id: `wall:${w.id}`, thickness: 0, kind: "interior" as const })),
     ...slabSnapWalls(plan.slabs).map(s => ({ ...s, id: `slab:${s.id}` })),
   ];
-  return detectRooms(walls, .5).filter(room => room.wallIds.some(key => key.startsWith("slab:")));
+  const measured = new Set<string>();
+  return detectRooms(walls, .5)
+    .filter(room => room.wallIds.some(key => key.startsWith("slab:")))
+    .sort((a, b) => a.area - b.area || a.id.localeCompare(b.id))
+    .filter(room => {
+      // When a slab divides an existing room, label the enclosed pad rather
+      // than also labeling the leftover room on the other side of its edges.
+      const spans = boundarySpans(plan, room);
+      if (spans.every(span => measured.has(span.key))) return false;
+      for (const span of spans) measured.add(span.key);
+      return true;
+    })
+    .map(room => ({ ...room, id: `slab-area:${room.id}` }))
+    .sort((a, b) => a.center.y - b.center.y || a.center.x - b.center.x);
 }
 
 export function slabDimensions(plan: Pick<Plan, "walls" | "slabs">): Dimension[] {
   const measured = new Set<string>();
   // A slab drawn within an existing enclosure has a face on both sides.
   // Measure each physical span once, facing away from the smaller area.
-  return slabAreas(plan).sort((a, b) => a.area - b.area).flatMap(area => area.points.flatMap((a, index) => {
-    const b = area.points[(index + 1) % area.points.length];
-    const slab = plan.slabs.find(edge => project(a, edge.a, edge.b).distance < .01 && project(b, edge.a, edge.b).distance < .01);
-    if (!slab) return [];
-    const key = [a, b].map(p => `${p.x.toFixed(4)},${p.y.toFixed(4)}`).sort().join(":");
+  return slabAreas(plan).sort((a, b) => a.area - b.area).flatMap(area => boundarySpans(plan, area).flatMap(({ slab, a, b, key }) => {
     if (measured.has(key)) return [];
     measured.add(key);
     return [{ id: `slab:${slab.id}:span:${key}`, slabId: slab.id, a, b, value: distance(a, b), offset: -30 }];
